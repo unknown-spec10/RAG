@@ -1,0 +1,11 @@
+[server]
+# Disable the watchdog that monitors file changes
+fileWatcherType = "none"
+
+# If you want to selectively disable only for certain modules, you can use:
+# enableXsrfProtection = false
+# enableStaticServing = true
+
+[runner]
+# Sets the number of seconds to wait for the script to stop when rerunning
+fastReruns = true
