@@ -102,8 +102,7 @@ def initialize_components():
             # since Ollama may not be available
             llm_name = "gpt-3.5-turbo"
             if os.environ.get("OPENAI_API_KEY") is None:
-                st.warning("No OpenAI API key found. Using local model, which may not work on Streamlit Cloud.")
-                llm_name = "llama3"  # Fallback option
+                llm_name = "llama3"  # Default model option
                 
             st.session_state.agent = RAGAgent(
                 retriever=st.session_state.retriever,

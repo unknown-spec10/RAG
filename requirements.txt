@@ -1,5 +1,4 @@
 # PDF parsing
-pymupdf
 pdfplumber
 
 # Text processing and chunking
@@ -10,19 +9,16 @@ langchain-text-splitters
 sentence-transformers
 
 # Vector Database
-chromadb
+faiss-cpu
 
 # LLM and Orchestration
 langchain-community
 langchain-core
 langgraph
-ollama
+groq
 
 # Frontend
 streamlit
-gradio
-fastapi
-uvicorn
 
 # Utils
 python-dotenv

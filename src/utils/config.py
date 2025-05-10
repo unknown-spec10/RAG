@@ -17,18 +17,27 @@ class Config:
             "use_pdfplumber": False,
             "chunk_size": 1000,
             "chunk_overlap": 200,
+            "storage_type": "cloud",  # Can be 'cloud' or 'local'
+            "cloud_storage_provider": "s3",  # Can be 's3' or 'azure'
+            "bucket_name": "agentic-rag-documents",
+            "region": "us-east-1"
         },
         "embeddings": {
             "model_name": "all-MiniLM-L6-v2",
             "device": None,  # Auto-detect
         },
         "vector_db": {
-            "persist_directory": "data/chroma_db",
+            "storage_type": "local",  # Can be 'local' or 'memory'
+            "persist_directory": "data/faiss_db",
             "collection_name": "documents",
-            "distance_func": "cosine",
+            "dimension": 384,  # Default dimension for all-MiniLM-L6-v2
+            "metric_type": "inner_product",  # or 'l2'
         },
         "llm": {
             "model_name": "llama3",
+            "provider": "ollama",  # Can be 'ollama' or 'groq'
+            "groq_api_key": None,  # Groq API key if using Groq
+            "groq_model": "llama2-70b-chat",  # Default Groq model
             "temperature": 0.1,
             "context_window": 8192,
             "max_tokens": 1024,

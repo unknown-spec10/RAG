@@ -10,15 +10,20 @@ from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.runnables import RunnableConfig, Runnable
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
-
 # Try to import Ollama, but don't fail if it's not available
 try:
     import ollama
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
-    logging.warning("Ollama not available. Falling back to OpenAI if API key is provided.")
+    logging.warning("Ollama not available. Please install Ollama or use a different provider.")
+
+try:
+    from groq import GroqClient
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    logging.warning("Groq client not available. Install 'groq' package to use Groq API.")
 
 from src.rag.retriever import RAGRetriever
 from src.rag.context_protocol import ContextProtocolManager, ContextSet
@@ -74,7 +79,7 @@ class RAGAgent:
         
     def _initialize_llm(self, model_name: str, temperature: float, max_tokens: int) -> Any:
         """
-        Initialize the appropriate LLM based on the model name.
+        Initialize the appropriate LLM based on the model name and provider.
         
         Args:
             model_name: Name of the model to use.
@@ -84,27 +89,34 @@ class RAGAgent:
         Returns:
             Initialized LLM instance.
         """
-        # Check if it's an OpenAI model
-        if model_name.startswith("gpt-"):
-            # Only initialize OpenAI if API key is available
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OpenAI API key not found in environment variables")
-            return ChatOpenAI(
-                model_name=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_key=api_key
-            )
+        # Get the LLM provider from config
+        config = Config()
+        provider = config.get("llm", "provider")
         
-        # Otherwise assume it's an Ollama model
-        if not OLLAMA_AVAILABLE:
-            raise ImportError(
-                "Ollama is not available and a non-OpenAI model was requested. "
-                "Please install Ollama or use an OpenAI model."
+        # Initialize based on provider
+        if provider == "ollama":
+            if not OLLAMA_AVAILABLE:
+                raise ImportError(
+                    "Ollama is not available. Please install Ollama or use a different provider."
+                )
+            return ollama.Client()
+        elif provider == "groq":
+            if not GROQ_AVAILABLE:
+                raise ImportError(
+                    "Groq client is not available. Please install 'groq' package or use a different provider."
+                )
+            
+            # Get Groq API key from config
+            groq_api_key = config.get("llm", "groq_api_key")
+            if not groq_api_key:
+                raise ValueError("Groq API key must be provided in configuration")
+            
+            return GroqClient(
+                api_key=groq_api_key,
+                model=config.get("llm", "groq_model")
             )
-        
-        return ollama.Client()
+        else:
+            raise ValueError(f"Unsupported LLM provider: {provider}")
     
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
@@ -198,21 +210,33 @@ class RAGAgent:
                         {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
                         {"role": "user", "content": prompt}
                     ]).content
+                elif isinstance(self.llm, GroqClient):
+                    # Using Groq
+                    response = self.llm.generate(
+                        messages=[
+                            {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens
+                    )
+                    
+                    # Extract response from Groq's response structure
+                    response = response["choices"][0]["message"]["content"]
                 else:
                     # Using Ollama
-                    llm_response = self.llm.chat(
+                    response = self.llm.generate(
                         model=self.model_name,
                         messages=[
                             {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
                             {"role": "user", "content": prompt}
                         ],
-                        options={
-                            "temperature": self.temperature,
-                            "num_ctx": self.context_window,
-                            "num_predict": self.max_tokens,
-                        }
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens
                     )
-                    response = llm_response["message"]["content"]
+                    
+                    # Extract response from Ollama's response structure
+                    response = response["response"]
                 
                 # Add to messages
                 messages = state.get("messages", [])

@@ -8,34 +8,72 @@ import uuid
 
 
 class ChromaVectorDB:
-    """Class for interacting with ChromaDB vector database."""
+    """Vector database implementation using ChromaDB."""
     
     def __init__(
         self, 
-        persist_directory: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "chroma_db"),
+        persist_directory: str,
         collection_name: str = "documents",
-        distance_func: str = "cosine"
+        distance_func: str = "cosine",
+        storage_type: str = "local",
+        cloud_storage_provider: str = "s3",
+        bucket_name: str = "agentic-rag-chroma",
+        region: str = "us-east-1"
     ):
         """
-        Initialize the ChromaDB client.
+        Initialize the Chroma vector database.
         
         Args:
-            persist_directory: Directory to persist the database.
+            persist_directory: Directory to persist the database (for local storage).
             collection_name: Name of the collection.
-            distance_func: Distance function for similarity search. Options: "cosine", "l2", "ip".
+            distance_func: Distance function to use (cosine, dot, l2).
+            storage_type: Type of storage ('local' or 'cloud').
+            cloud_storage_provider: Cloud storage provider ('s3' or 'azure').
+            bucket_name: Name of the cloud storage bucket.
+            region: Cloud region for storage.
         """
-        self.persist_directory = os.path.abspath(persist_directory)
+        self.persist_directory = persist_directory
         self.collection_name = collection_name
         self.distance_func = distance_func
+        self.storage_type = storage_type
+        self.cloud_storage_provider = cloud_storage_provider
+        self.bucket_name = bucket_name
+        self.region = region
         
-        # Create directory if it doesn't exist
-        os.makedirs(self.persist_directory, exist_ok=True)
+        # Initialize ChromaDB
+        if storage_type == "local":
+            self.client = chromadb.PersistentClient(path=persist_directory)
+        else:
+            # For cloud storage, we'll use a different client
+            self.client = self._initialize_cloud_client()
         
-        # Initialize client
-        self.client = chromadb.PersistentClient(
-            path=self.persist_directory,
-            settings=Settings(
-                anonymized_telemetry=False,
+        self.collection = self._get_or_create_collection()
+    
+    def _initialize_cloud_client(self):
+        """Initialize the cloud storage client."""
+        if self.cloud_storage_provider == "s3":
+            import boto3
+            from chromadb.config import Settings
+            
+            # Initialize S3 client
+            s3_client = boto3.client('s3', region_name=self.region)
+            
+            # Create bucket if it doesn't exist
+            try:
+                s3_client.create_bucket(
+                    Bucket=self.bucket_name,
+                    CreateBucketConfiguration={'LocationConstraint': self.region}
+                )
+            except s3_client.exceptions.BucketAlreadyExists:
+                pass
+            
+            # Initialize Chroma with S3 settings
+            return chromadb.HttpClient(
+                settings=Settings(
+                    chroma_db_impl="rest",
+                    host="chroma-server",  # This would be your Chroma server endpoint
+                    port=8000
+                )
                 allow_reset=True
             )
         )

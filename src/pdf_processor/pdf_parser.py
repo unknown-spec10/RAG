@@ -17,6 +17,76 @@ class PDFParser:
         """
         self.use_pdfplumber = use_pdfplumber
     
+    def parse_file(self, file_path: str) -> str:
+        """
+        Parse a PDF file and extract text.
+        
+        Args:
+            file_path: Path to the PDF file.
+            
+        Returns:
+            Extracted text from the PDF.
+        """
+        if self.use_pdfplumber:
+            return self._parse_with_pdfplumber(file_path)
+        return self._parse_with_pymupdf(file_path)
+    
+    def parse_cloud_storage(self, bucket_name: str, object_key: str, storage_provider: str = "s3") -> str:
+        """
+        Parse a PDF file from cloud storage.
+        
+        Args:
+            bucket_name: Name of the cloud storage bucket.
+            object_key: Key/path of the PDF file in the bucket.
+            storage_provider: Cloud storage provider ('s3' or 'azure').
+            
+        Returns:
+            Extracted text from the PDF.
+        """
+        if storage_provider == "s3":
+            s3 = boto3.client('s3')
+            
+            try:
+                # Download the file to a temporary location
+                temp_file = f"/tmp/{object_key.split('/')[-1]}"
+                s3.download_file(bucket_name, object_key, temp_file)
+                
+                # Parse the downloaded file
+                text = self.parse_file(temp_file)
+                
+                # Clean up
+                os.remove(temp_file)
+                return text
+                
+            except Exception as e:
+                print(f"Error parsing PDF from S3: {str(e)}")
+                return ""
+        else:
+            raise ValueError(f"Unsupported storage provider: {storage_provider}")
+    
+    def _parse_with_pymupdf(self, file_path: str) -> str:
+        """Parse PDF using PyMuPDF."""
+        text = ""
+        try:
+            doc = fitz.open(file_path)
+            for page in doc:
+                text += page.get_text()
+            doc.close()
+        except Exception as e:
+            print(f"Error parsing PDF with PyMuPDF: {str(e)}")
+        return text
+    
+    def _parse_with_pdfplumber(self, file_path: str) -> str:
+        """Parse PDF using pdfplumber."""
+        text = ""
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages:
+                    text += page.extract_text()
+        except Exception as e:
+            print(f"Error parsing PDF with pdfplumber: {str(e)}")
+        return text
+    
     def parse_pdf(self, pdf_path: str) -> List[Dict[str, Any]]:
         """
         Extract text from a PDF file.
