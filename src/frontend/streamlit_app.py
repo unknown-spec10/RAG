@@ -62,36 +62,47 @@ if "initialized" not in st.session_state:
 def initialize_components():
     """Initialize RAG components lazily."""
     if not st.session_state.initialized:
-        from src.pdf_processor.pdf_parser import PDFParser
-        from src.pdf_processor.text_chunker import TextChunker
-        from src.embeddings.embedding_model import EmbeddingModel
-        try:
-            from src.vector_db.chroma_db import ChromaVectorDB
-        except ImportError:
-            raise ImportError("ChromaVectorDB is not defined or cannot be imported from 'src.vector_db.chroma_db'")
-        # Verify that the ChromaVectorDB class exists in the specified module
-        from src.rag.retriever import RAGRetriever
-        from src.rag.context_protocol import ContextProtocolManager
-        from src.agents.rag_agent import RAGAgent
-
-        # Get the data directory - use .streamlit folder for cloud deployment
-        data_dir = "data"
-        # Create persistent directories
-        for folder in ["pdfs", "chroma_db", "cache"]:
-            os.makedirs(os.path.join(data_dir, folder), exist_ok=True)
-
-        # Initialize components
-        st.session_state.pdf_parser = PDFParser(use_pdfplumber=False)
-        st.session_state.text_chunker = TextChunker(chunk_size=1000, chunk_overlap=200)
-        st.session_state.embedding_model = EmbeddingModel(model_name="all-MiniLM-L6-v2")
+        # Initialize all session state variables
+        st.session_state.initialized = True
+        st.session_state.pdf_files = []
+        st.session_state.indexed_files = set()
+        st.session_state.messages = []
+        st.session_state.followup_questions = []
+        st.session_state.pdf_parser = None
+        st.session_state.text_chunker = None
+        st.session_state.embedding_model = None
+        st.session_state.vector_db = None
+        st.session_state.context_protocol = None
+        st.session_state.retriever = None
+        st.session_state.rag_agent = None
         
         try:
-            # Use relative paths for better cloud compatibility
-            chroma_persist_dir = os.path.join(data_dir, "chroma_db")
-            st.session_state.vector_db = ChromaVectorDB(
-                persist_directory=chroma_persist_dir,
-                collection_name="documents"
-            )
+            from src.pdf_processor.pdf_parser import PDFParser
+            from src.pdf_processor.text_chunker import TextChunker
+            from src.embeddings.embedding_model import EmbeddingModel
+            from src.vector_db.faiss_db import FAISSVectorDB  # Changed to use FAISS
+            from src.rag.retriever import RAGRetriever
+            from src.rag.context_protocol import ContextProtocolManager
+            from src.agents.rag_agent import RAGAgent
+
+            # Get the data directory - use .streamlit folder for cloud deployment
+            data_dir = "data"
+            # Create persistent directories
+            for folder in ["pdfs", "faiss_db", "cache"]:
+                os.makedirs(os.path.join(data_dir, folder), exist_ok=True)
+
+            # Initialize components
+            st.session_state.pdf_parser = PDFParser(use_pdfplumber=False)
+            st.session_state.text_chunker = TextChunker(chunk_size=1000, chunk_overlap=200)
+            st.session_state.embedding_model = EmbeddingModel(model_name="all-MiniLM-L6-v2")
+            
+            try:
+                # Use relative paths for better cloud compatibility
+                faiss_persist_dir = os.path.join(data_dir, "faiss_db")
+                st.session_state.vector_db = FAISSVectorDB(
+                    persist_directory=faiss_persist_dir,
+                    collection_name="documents"
+                )
             st.session_state.context_protocol = ContextProtocolManager()
             st.session_state.retriever = RAGRetriever(
                 vector_db=st.session_state.vector_db,
