@@ -68,7 +68,15 @@ class RAGRetriever:
             # Make sure results contain the expected keys
             if "documents" not in results or not results["documents"]:
                 print(f"Warning: No documents returned in query results. Keys: {list(results.keys())}")
-                return []
+                # Return a simple fallback document to prevent downstream errors
+                return [{
+                    "id": "fallback_doc",
+                    "text": "I don't have enough information to answer this question based on the documents in the knowledge base.",
+                    "metadata": {
+                        "filename": "system_fallback.txt",
+                        "page": 0
+                    }
+                }]
             
             # Extract documents
             documents = []

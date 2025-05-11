@@ -7,15 +7,12 @@ import tempfile
 import json
 import time
 import uuid
+import numpy as np  # For array operations with embeddings
 
 # Detect if we're running on Streamlit Cloud
 # This helps with proper resource configuration
 if os.environ.get("STREAMLIT_SHARING_MODE") or os.environ.get("STREAMLIT_RUN_ON_SAVE"):
     os.environ["IS_STREAMLIT_CLOUD"] = "true"
-    
-    # For cloud deployment, we need to reduce memory usage
-    import torch
-    torch.set_grad_enabled(False)  # Disable gradient tracking to save memory
 
 # Add the project root to Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -256,8 +253,20 @@ def index_documents(uploaded_files):
                 # Extract just the text strings from the chunk dictionaries
                 chunks = [chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk) for chunk in chunks_data]
                 
-                # Create embeddings
-                embeddings = st.session_state.embedding_model.embed_texts(chunks)
+                # Create embeddings - use a try-except block to handle potential errors
+                try:
+                    embeddings = st.session_state.embedding_model.embed_texts(chunks)
+                except AttributeError as e:
+                    if "'EmbeddingModel' object has no attribute 'model'" in str(e):
+                        # If we get the specific model attribute error, create embeddings manually
+                        print("Using fallback embedding generation method")
+                        embeddings = []
+                        for chunk in chunks:
+                            # Call embed_text directly which uses _generate_embedding
+                            embeddings.append(st.session_state.embedding_model.embed_text(chunk))
+                        embeddings = np.array(embeddings)
+                    else:
+                        raise
                 
                 # Create documents for vector DB
                 for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):

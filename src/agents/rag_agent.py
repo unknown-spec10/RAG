@@ -355,52 +355,82 @@ class RAGAgent:
             Format your response as a JSON list of strings.
             """
             
-            # Different handling based on LLM type
-            if isinstance(self.llm, ChatOpenAI):
-                # Using OpenAI
-                followup_text = self.llm.invoke([
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": followup_prompt}
-                ]).content
-            else:
-                # Using Ollama
-                llm_response = self.llm.chat(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": followup_prompt}
-                    ],
-                    options={
-                        "temperature": 0.7,  # Higher temperature for creativity
-                        "num_predict": 500,
-                    }
-                )
-                followup_text = llm_response["message"]["content"]
-            
-            # Try to parse as JSON
             try:
-                # Extract JSON part if it exists
-                if "```json" in followup_text:
-                    json_str = followup_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in followup_text:
-                    json_str = followup_text.split("```")[1].strip()
+                # Try using the Groq LLM
+                model_response = self.llm.invoke([
+                    {"role": "system", "content": "You are a helpful assistant."}, 
+                    {"role": "user", "content": followup_prompt}
+                ])
+                
+                # Extract the text based on the response format
+                if hasattr(model_response, 'content'):
+                    # LangChain standard response
+                    followup_text = model_response.content
+                elif isinstance(model_response, dict) and 'content' in model_response:
+                    followup_text = model_response['content']
+                elif isinstance(model_response, dict) and 'choices' in model_response:
+                    # Groq-style response
+                    choices = model_response.get('choices', [])
+                    if choices and 'message' in choices[0]:
+                        followup_text = choices[0]['message'].get('content', '')
+                    else:
+                        followup_text = str(model_response)
                 else:
-                    json_str = followup_text
+                    followup_text = str(model_response)
+                
+                # Try to parse the JSON response
+                if '```json' in followup_text:
+                    # Extract JSON from markdown code block
+                    json_str = followup_text.split('```json')[1].split('```')[0].strip()
+                elif '```' in followup_text:
+                    # Extract from generic code block
+                    json_str = followup_text.split('```')[1].strip()
+                else:
+                    # Use the whole text
+                    json_str = followup_text.strip()
+                
+                # Parse the JSON string to get follow-up questions
+                try:
+                    parsed_result = json.loads(json_str)
+                    if isinstance(parsed_result, list):
+                        followup_questions = parsed_result
+                    elif isinstance(parsed_result, dict) and 'questions' in parsed_result:
+                        followup_questions = parsed_result['questions']
+                    else:
+                        # If we can't parse as expected, use default questions
+                        followup_questions = [
+                            "Can you tell me more about this topic?",
+                            "What else should I know?",
+                            "How does this relate to other topics?"
+                        ]
+                except json.JSONDecodeError:
+                    # Fallback to extracting questions heuristically
+                    import re
+                    question_pattern = re.compile(r'[^.?!]*\?')
+                    followup_questions = question_pattern.findall(followup_text)
                     
-                # Try to parse JSON
-                followup_questions = json.loads(json_str)
-            except Exception:
-                # Fallback: try to extract questions heuristically
-                import re
-                followup_questions = []
-                for line in followup_text.split("\n"):
-                    line = line.strip()
-                    # Look for lines that appear to be questions
-                    if line and ("?" in line) and len(line) > 10:
-                        # Clean up formatting like numbers or bullet points
-                        clean_line = re.sub(r'^[\d\-\*\.\s]+', '', line).strip()
-                        if clean_line:
-                            followup_questions.append(clean_line)
+                    # If no questions found, use default questions
+                    if not followup_questions:
+                        followup_questions = [
+                            "Can you tell me more about this topic?",
+                            "What else should I know?",
+                            "How does this relate to other topics?"
+                        ]
+            except Exception as e:
+                logging.warning(f"Error generating follow-up questions with LLM: {e}")
+                # Fallback to simple default questions
+                followup_questions = [
+                    "Can you tell me more about this topic?",
+                    "What else should I know?",
+                    "How does this relate to other topics?"
+                ]
+        except Exception as e:
+            logging.error(f"Error in follow-up question generation: {e}")
+            followup_questions = [
+                "Can you tell me more about this topic?",
+                "What else should I know?",
+                "How does this relate to other topics?"
+            ]
         except Exception as e:
             # If there's an error, log it and return empty list
             logging.warning(f"Error generating follow-up questions: {str(e)}")
