@@ -4,6 +4,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 import torch
 import asyncio
+import os
 
 
 class EmbeddingModel:
@@ -25,13 +26,29 @@ class EmbeddingModel:
         """
         self.model_name = model_name
         
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Force CPU usage on cloud deployments to avoid resource errors
+        # Check if this is running on Streamlit Cloud
+        is_streamlit_cloud = os.environ.get("IS_STREAMLIT_CLOUD") == "true"
+        
+        # Always use CPU when deployed
+        if is_streamlit_cloud or device == "cpu":
+            self.device = "cpu"
         else:
-            self.device = device
-            
-        self.model = SentenceTransformer(model_name, device=self.device)
-        self.embedding_dim = self.model.get_sentence_embedding_dimension()
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        try:
+            self.model = SentenceTransformer(model_name, device=self.device)
+            self.embedding_dim = self.model.get_sentence_embedding_dimension()
+        except RuntimeError as e:
+            if "meta tensor" in str(e):
+                # Fallback to CPU with explicit settings if meta tensor error occurs
+                print("⚠️ Meta tensor error detected. Falling back to CPU with explicit tensor settings.")
+                torch.set_grad_enabled(False)
+                self.device = "cpu"
+                self.model = SentenceTransformer(model_name, device=self.device)
+                self.embedding_dim = self.model.get_sentence_embedding_dimension()
+            else:
+                raise
         
     def embed_text(self, text: str) -> np.ndarray:
         """

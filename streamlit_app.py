@@ -8,6 +8,15 @@ import json
 import time
 import uuid
 
+# Detect if we're running on Streamlit Cloud
+# This helps with proper resource configuration
+if os.environ.get("STREAMLIT_SHARING_MODE") or os.environ.get("STREAMLIT_RUN_ON_SAVE"):
+    os.environ["IS_STREAMLIT_CLOUD"] = "true"
+    
+    # For cloud deployment, we need to reduce memory usage
+    import torch
+    torch.set_grad_enabled(False)  # Disable gradient tracking to save memory
+
 # Add the project root to Python path
 project_root = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(project_root, "src")
@@ -31,6 +40,8 @@ APP_CONFIG = {
         "chunk_overlap": 200,
     },
     "embeddings": {
+        # Use a small, efficient model to reduce memory usage
+        # all-MiniLM-L6-v2 is only ~80MB and works well for general purpose embedding
         "model_name": "all-MiniLM-L6-v2",
     },
     "vector_db": {
@@ -44,7 +55,8 @@ APP_CONFIG = {
         "rerank": True,
     },
     "llm": {
-        "model_name": "mixtral-8x7b",
+        # Use LLama3 models which are currently supported by Groq
+        "model_name": "llama3-70b-8192",
         "provider": "groq",
     }
 }
