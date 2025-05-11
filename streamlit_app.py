@@ -1,8 +1,4 @@
-"""Agentic RAG - Streamlit Frontend
-
-A Retrieval-Augmented Generation (RAG) application that allows you to chat with your documents.
-Created by Deep Podder.
-"""
+"""Agentic RAG - Streamlit Frontend"""
 import streamlit as st
 import os
 import sys
@@ -12,14 +8,6 @@ import json
 import time
 import uuid
 import numpy as np  # For array operations with embeddings
-
-# Set page title and favicon
-st.set_page_config(
-    page_title="Agentic RAG",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Detect if we're running on Streamlit Cloud
 # This helps with proper resource configuration
@@ -70,65 +58,52 @@ APP_CONFIG = {
     }
 }
 
-# Initialize the app state if it doesn't exist
-if 'initialized' not in st.session_state:
+# Initialize session state
+if "initialized" not in st.session_state:
     st.session_state.initialized = False
-    st.session_state.documents = []
-    st.session_state.question_history = []
-    st.session_state.answer_history = []
-    st.session_state.sources_history = []
+    st.session_state.pdf_files = []
+    st.session_state.indexed_files = set()
+    st.session_state.messages = []
     st.session_state.followup_questions = []
-    st.session_state.document_count = 0
-    st.session_state.error = None
-    st.session_state.messages = []  # Initialize messages for chat history
     # Create data directories
     os.makedirs("data/cache", exist_ok=True)
     # Initialize configuration
     st.session_state.config = APP_CONFIG
 
-def init_api_keys():
-    """Initialize API keys from environment variables or Streamlit secrets."""
-    # Groq API Key (required)
-    groq_api_key = None
+def get_api_keys():
+    """Get API keys from Streamlit secrets or environment variables."""
+    # Default API keys - hardcoded for development only 
+    # In production these should be set via environment variables or secrets
+    groq_api_key = "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"
     
-    # Try to get from Streamlit secrets first
-    if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-        groq_api_key = st.secrets["GROQ_API_KEY"]
-    # Then try environment variables
-    elif os.environ.get("GROQ_API_KEY"):
-        groq_api_key = os.environ.get("GROQ_API_KEY")
-        
-    # Check if we have a valid Groq API key
-    if not groq_api_key:
-        st.error("❌ Groq API key not found! Please add it to your secrets or environment variables.")
-        st.info("To add your Groq API key, create a .streamlit/secrets.toml file with:\n\nGROQ_API_KEY = \"your-groq-api-key-here\"")
-        return False
-        
-    # Google API Key (optional)
-    google_api_key = None
+    # First try to load from .env file if running locally
+    if not os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing":
+        from dotenv import load_dotenv
+        load_dotenv()
     
-    # Try to get from Streamlit secrets first
-    if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets:
-        google_api_key = st.secrets["GOOGLE_API_KEY"]
-    # Then try environment variables
-    elif os.environ.get("GOOGLE_API_KEY"):
-        google_api_key = os.environ.get("GOOGLE_API_KEY")
-        
-    # Store the API keys in environment variables for modules to access
-    os.environ["GROQ_API_KEY"] = groq_api_key
-    if google_api_key:
-        os.environ["GOOGLE_API_KEY"] = google_api_key
+    # Check for keys in environment variables and Streamlit secrets
+    # For deployed apps (Streamlit Cloud)
+    if os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing":
+        try:
+            groq_api_key = st.secrets["GROQ_API_KEY"]
+        except (KeyError, TypeError):
+            pass  # Use hardcoded keys as fallback
     else:
-        st.info("ℹ️ Google API key not found. Using fallback hash-based embeddings.")
+        # For local development, try environment variables
+        if os.environ.get("GROQ_API_KEY"):
+            groq_api_key = os.environ.get("GROQ_API_KEY")
     
-    return True
+    # Display info about LLM provider
+    st.sidebar.info("✅ Using Groq API for LLM and hash-based embeddings for vector search")
+    
+    # We don't need google_api_key anymore since we're using hash-based embeddings
+    return groq_api_key, ""  # Return empty string for google_api_key
 
 def initialize_components():
     """Initialize RAG components."""
     try:
         # Get API keys first
-        if not init_api_keys():
-            return False
+        groq_api_key, google_api_key = get_api_keys()
         
         # Initialize file cache
         st.session_state.file_cache = cache_utils.FileCache("data/cache")
@@ -432,140 +407,16 @@ def index_documents(uploaded_files):
         import traceback
         st.error(f"Traceback: {traceback.format_exc()}")
 
-def process_documents(uploaded_files):
-    """Process uploaded PDF documents."""
-    if not uploaded_files:
-        return False
-        
-    processed_count = 0
-    
-    with st.spinner("Processing documents..."):
-        try:
-            # Initialize the PDF parser
-            pdf_parser_instance = pdf_parser.PDFParser()
-            
-            # Initialize the text chunker
-            text_chunker_instance = text_chunker.TextChunker(
-                chunk_size=APP_CONFIG["pdf_processor"]["chunk_size"],
-                chunk_overlap=APP_CONFIG["pdf_processor"]["chunk_overlap"]
-            )
-            
-            # Initialize embedding model
-            embedding_model_instance = embedding_model.EmbeddingModel()
-            
-            # Initialize vector database
-            if not os.path.exists("data/cache"):
-                os.makedirs("data/cache")
-            vector_db_instance = faiss_db.FAISSVectorDB(
-                persist_directory="data/cache",
-                collection_name="documents",
-                dimension=384  # Using 384 dimensions for consistency
-            )
-            
-            # Process each uploaded file
-            for uploaded_file in uploaded_files:
-                try:
-                    # Show progress message
-                    st.text(f"Processing: {uploaded_file.name}")
-                    
-                    # Create a temporary file
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        tmp_path = tmp_file.name
-                    
-                    # Extract text from PDF
-                    try:
-                        extracted_text = pdf_parser_instance.parse_file(tmp_path)
-                    except Exception as e:
-                        st.error(f"Error parsing PDF {uploaded_file.name}: {str(e)}")
-                        continue
-                        
-                    # Remove the temporary file
-                    os.unlink(tmp_path)
-                    
-                    # Split text into chunks
-                    chunks = text_chunker_instance.split_text(extracted_text)
-                    
-                    if not chunks:
-                        st.warning(f"No content extracted from {uploaded_file.name}")
-                        continue
-                    
-                    st.text(f"Created {len(chunks)} chunks from {uploaded_file.name}")
-                    
-                    # Create documents with metadata
-                    documents = []
-                    for i, chunk in enumerate(chunks):
-                        # Generate embedding for the chunk
-                        try:
-                            # Generate embedding
-                            embedding = embedding_model_instance.get_embedding(chunk)
-                        except Exception as e:
-                            st.warning(f"Using fallback embedding method")
-                            # Create a simple fallback embedding
-                            embedding = embedding_model_instance._generate_hash_embedding(chunk)
-                        
-                        # Create document
-                        doc = {
-                            "text": chunk,
-                            "embedding": embedding,
-                            "metadata": {
-                                "source": uploaded_file.name,
-                                "chunk": i,
-                                "total_chunks": len(chunks)
-                            }
-                        }
-                        documents.append(doc)
-                    
-                    # Add to vector database
-                    vector_db_instance.add_documents(documents)
-                    
-                    # Add to session state
-                    file_info = {
-                        "name": uploaded_file.name,
-                        "chunks": len(chunks),
-                        "embedding_dim": len(embedding) if len(documents) > 0 else 0
-                    }
-                    st.session_state.documents.append(file_info)
-                    
-                    processed_count += 1
-                    
-                except Exception as e:
-                    import traceback
-                    error_msg = f"Error processing {uploaded_file.name}: {str(e)}"
-                    st.session_state.error = error_msg
-                    print(error_msg)
-                    print(traceback.format_exc())
-                    st.error(error_msg)
-            
-            if processed_count > 0:
-                st.session_state.document_count += processed_count
-                st.success(f"✅ Successfully processed {processed_count} documents.")
-                return True
-            else:
-                st.warning("⚠️ No documents were processed successfully.")
-                return False
-                
-        except Exception as e:
-            import traceback
-            error_msg = f"Error in document processing: {str(e)}"
-            st.session_state.error = error_msg
-            print(error_msg)
-            print(traceback.format_exc())
-            st.error(error_msg)
-            return False
-
 def main():
-    """Main application function."""
-    # Set title and banner
-    st.title("📚 Agentic RAG")
-    st.subheader("Chat with your documents using AI")
+    """Main application entry point."""
+    st.set_page_config(
+        page_title="Agentic RAG",
+        page_icon="📚",
+        layout="wide"
+    )
     
-    # Add creator credit
-    st.markdown("<div style='text-align: right; color: gray; padding-bottom: 10px;'>Created by Deep Podder</div>", unsafe_allow_html=True)
-    
-    # Initialize API keys
-    if not init_api_keys():
-        st.stop()
+    st.title("Agentic RAG")
+    st.markdown("<p style='font-size:0.9em;color:gray;'>Created by Deep Podder</p>", unsafe_allow_html=True)
     
     # Initialize components if not already done
     if not st.session_state.initialized:
