@@ -4,6 +4,51 @@ import numpy as np
 import hashlib
 import re
 
+class DummyModel:
+    """Dummy model that can handle encode method calls."""
+    
+    def __init__(self, embedding_dim=384):
+        self.embedding_dim = embedding_dim
+    
+    def encode(self, texts, normalize_embeddings=True, batch_size=None):
+        """Handle encoding like a sentence transformer but using hash-based embeddings."""
+        # Check if texts is a single string or a list of strings
+        if isinstance(texts, str):
+            # Single text input
+            from hashlib import md5
+            import numpy as np
+            import re
+            
+            hash_base = md5(texts.encode()).digest()
+            # Create a deterministic embedding from the hash
+            embedding = np.frombuffer(hash_base, dtype=np.uint8).astype(np.float32)
+            # Ensure it's the right size by repeating/truncating
+            result = np.zeros(self.embedding_dim, dtype=np.float32)
+            for i in range(self.embedding_dim):
+                result[i] = embedding[i % len(embedding)] / 255.0
+            # Normalize if requested
+            if normalize_embeddings:
+                norm = np.linalg.norm(result)
+                if norm > 0:
+                    result /= norm
+            return result
+        else:
+            # List of texts
+            import numpy as np
+            embeddings = np.zeros((len(texts), self.embedding_dim), dtype=np.float32)
+            for i, text in enumerate(texts):
+                embeddings[i] = self.encode(text, normalize_embeddings=normalize_embeddings)
+            return embeddings
+    
+    def get_sentence_embedding_dimension(self):
+        """Return the embedding dimension."""
+        return self.embedding_dim
+    
+    def get_max_seq_length(self):
+        """Return a reasonable max sequence length."""
+        return 512
+
+
 class EmbeddingModel:
     """Lightweight embedding model using simple text hashing."""
     
@@ -17,6 +62,8 @@ class EmbeddingModel:
         self.model_name = "lightweight-hash-embeddings"
         self.device = "cpu"  # No GPU required
         self.embedding_dim = 384  # Standard dimension for compatibility
+        # Create a dummy model that has the same API as sentence transformers models
+        self.model = DummyModel(embedding_dim=self.embedding_dim)
     
     def _generate_embedding(self, text: str) -> np.ndarray:
         """Generate a deterministic embedding from text using hashing."""
