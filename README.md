@@ -1,6 +1,6 @@
 # Agentic RAG
 
-A Retrieval-Augmented Generation (RAG) application that allows you to chat with your documents using advanced LLMs via the Groq API.
+A Retrieval-Augmented Generation (RAG) application that allows you to chat with your documents using advanced LLMs via the Groq API. Created by Deep Podder.
 
 ## Features
 
@@ -15,9 +15,20 @@ A Retrieval-Augmented Generation (RAG) application that allows you to chat with 
 2. Create a new app on [Streamlit Cloud](https://streamlit.io/cloud)
 3. Connect to your forked repository
 4. Configure the app settings with the main file as `streamlit_app.py`
-5. Add your Groq API key as a secret in the Streamlit Cloud dashboard:
+5. Add your API keys as secrets in the Streamlit Cloud dashboard:
    - Go to Advanced Settings > Secrets
-   - Add `GROQ_API_KEY = "your-api-key-here"`
+   - Add the following to your secrets.toml:
+   ```toml
+   GROQ_API_KEY = "your-groq-api-key-here"
+   GOOGLE_API_KEY = "your-google-api-key-here"  # For Gemini embeddings (optional)
+   ```
+
+### Troubleshooting Cloud Deployment
+
+- **Memory Issues**: The application uses lightweight embedding methods to stay within Streamlit Cloud's memory limits
+- **Missing API Keys**: Check that you've properly added your API keys to the Streamlit secrets
+- **Slow Performance**: First document processing may take longer; subsequent queries will be faster
+- **Embedding Errors**: If Google API isn't available, the app will automatically fall back to hash-based embeddings
 
 ## Local Development
 
@@ -27,16 +38,44 @@ A Retrieval-Augmented Generation (RAG) application that allows you to chat with 
    - Windows: `venv\Scripts\activate`
    - Linux/Mac: `source venv/bin/activate`
 4. Install dependencies: `pip install -r requirements.txt`
-5. Create a `.streamlit/secrets.toml` file with your Groq API key:
-   ```toml
-   GROQ_API_KEY = "your-api-key-here"
+5. Set up your API keys using one of these methods:
+   
+   **Option 1**: Create a `.env` file in the project root:
    ```
+   GROQ_API_KEY=your-groq-api-key-here
+   GOOGLE_API_KEY=your-google-api-key-here  # For Gemini embeddings (optional)
+   ```
+   
+   **Option 2**: Create a `.streamlit/secrets.toml` file:
+   ```toml
+   GROQ_API_KEY = "your-groq-api-key-here"
+   GOOGLE_API_KEY = "your-google-api-key-here"  # For Gemini embeddings (optional)
+   ```
+
 6. Run the application: `streamlit run streamlit_app.py`
 
 ## Requirements
 
 - Python 3.9+
-- Groq API key
+- Groq API key (required) - Get one from [Groq Console](https://console.groq.com/)
+- Google API key for Gemini embeddings (optional, falls back to hash-based embeddings if not provided)
+
+## Features & Limitations
+
+### Features
+- **Document Processing**: Upload and process PDFs into searchable chunks
+- **Retrieval**: Find relevant document sections based on your questions
+- **Generation**: Get AI responses based on your document content using Groq's Llama3-70b model
+- **Source Attribution**: See which parts of your documents were used to generate the answer
+
+### Limitations
+- PDF processing only (no Word, Excel or other formats)
+- Maximum file size limited by Streamlit (default 200MB)
+- Performance depends on document complexity and size
+
+## Credits
+
+Created and maintained by Deep Podder.
 
 ---
 

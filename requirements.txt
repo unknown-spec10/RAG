@@ -17,6 +17,7 @@ langchain-community>=0.0.11
 langchain-core>=0.1.8
 langgraph>=0.0.19
 groq>=0.4.0
+google-generativeai>=0.3.0
 
 # Development dependencies (optional for deployment)
 pylint>=2.17.0

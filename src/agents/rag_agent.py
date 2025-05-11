@@ -212,14 +212,26 @@ class RAGAgent:
         query = state["query"]
         
         try:
-            # Retrieve relevant documents
-            documents = self.retriever.retrieve(query=query, rerank=True)
+            # Retrieve documents using the retriever
+            documents = self.retriever.retrieve(query=query)
             
-            # Create context set using the context protocol
-            context_set = self.context_protocol.from_retrieved_documents(
-                documents=documents,
-                query=query
-            )
+            # Debug information
+            print(f"Retrieved {len(documents)} documents for query: '{query}'")
+            
+            # Create a simple context dictionary from the documents
+            document_texts = []
+            for i, doc in enumerate(documents):
+                if isinstance(doc, dict):
+                    text = doc.get("text", "")
+                    metadata = doc.get("metadata", {})
+                else:
+                    text = getattr(doc, "page_content", str(doc))
+                    metadata = getattr(doc, "metadata", {})
+                
+                document_texts.append({"text": text, "metadata": metadata})
+                
+            # Create a simple context object
+            context_set = {"documents": document_texts}
             
             # Update state
             return {
@@ -228,6 +240,9 @@ class RAGAgent:
                 "context": context_set
             }
         except Exception as e:
+            import traceback
+            print(f"Error retrieving documents: {str(e)}")
+            print(traceback.format_exc())
             # Handle errors
             return {
                 **state,
@@ -260,54 +275,67 @@ class RAGAgent:
             
         else:
             try:
-                # Format prompt
-                prompt = self._format_rag_prompt(query, context_set)
+                # Get the document content from state
+                documents = state.get("documents", [])
+                context_docs = []
                 
-                # Generic approach that works with any LLM type
+                for doc in documents:
+                    if isinstance(doc, dict):
+                        text = doc.get("text", "")
+                        metadata = doc.get("metadata", {})
+                    else:
+                        text = getattr(doc, "page_content", str(doc))
+                        metadata = getattr(doc, "metadata", {})
+                    
+                    source = metadata.get("source", "Unknown")
+                    context_docs.append(f"Source: {source}\n{text}\n")
+                
+                # Format a simple, clear prompt for Groq
+                context_text = "\n\n---\n\n".join(context_docs)
+                
+                system_prompt = """You are a helpful assistant that answers questions based ONLY on the provided context. 
+                If the context doesn't contain enough information to answer the question, say "I don't have enough information to answer this question" and don't make up information.
+                Always be truthful, helpful, and concise."""
+                
+                user_prompt = f"""I need information about the following question:
+
+{query}
+
+Here is the relevant information from my documents:
+
+{context_text}
+
+Please answer my question based only on the information provided above."""
+                
+                print(f"Sending prompt to Groq with {len(context_docs)} document chunks")
+                
+                # Direct use of Groq API to simplify the process
                 try:
-                    # First try the invoke method (new LangChain API)
-                    try:
-                        system_message = {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."}
-                        user_message = {"role": "user", "content": prompt}
-                        result = self.llm.invoke([system_message, user_message])
-                        
-                        # Extract response based on result type
-                        if hasattr(result, 'content'):
-                            response = result.content  # LangChain standard response
-                        elif isinstance(result, dict) and 'content' in result:
-                            response = result["content"]
-                        elif isinstance(result, dict) and 'choices' in result and len(result['choices']) > 0:
-                            # Groq-like response structure
-                            response = result["choices"][0]["message"]["content"]
-                        elif isinstance(result, dict) and 'response' in result:
-                            # Ollama-like response structure
-                            response = result["response"]
-                        elif isinstance(result, str):
-                            response = result
-                        else:
-                            # Fallback - convert to string
-                            response = str(result)
-                    except (AttributeError, TypeError, KeyError):
-                        # Fallback to generate method for older APIs
-                        result = self.llm.generate(
-                            messages=[
-                                {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=self.temperature,
-                            max_tokens=self.max_tokens
-                        )
-                        
-                        # Try to extract response from various possible formats
-                        if isinstance(result, dict) and 'choices' in result and len(result['choices']) > 0:
-                            response = result["choices"][0]["message"]["content"]
-                        elif isinstance(result, dict) and 'response' in result:
-                            response = result["response"]
-                        elif isinstance(result, str):
-                            response = result
-                        else:
-                            # Last resort - convert to string
-                            response = str(result)
+                    # Use the invoke method with clear role separation
+                    response = self.llm.invoke([
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ])
+                    
+                    # Handle different response formats from different LLM wrappers
+                    if isinstance(response, str):
+                        # String response - use directly
+                        pass
+                    elif hasattr(response, 'content'):
+                        # LangChain ChatMessage format
+                        response = response.content
+                    elif isinstance(response, dict):
+                        # Dictionary response (like from raw API)
+                        if 'content' in response:
+                            response = response['content']
+                        elif 'choices' in response and len(response['choices']) > 0:
+                            if 'message' in response['choices'][0]:
+                                response = response['choices'][0]['message']['content']
+                            elif 'text' in response['choices'][0]:
+                                response = response['choices'][0]['text']
+                    
+                    # Print the first part of the response for debugging
+                    print(f"Received response from Groq: {response[:100]}...")
                 except Exception as e:
                     # Fallback if all else fails
                     print(f"Error generating response with LLM: {str(e)}")
@@ -447,22 +475,38 @@ class RAGAgent:
             "followup_questions": followup_questions
         }
     
-    def _format_rag_prompt(self, query: str, context_set: ContextSet) -> str:
+    def _format_rag_prompt(self, query: str, documents: List[Dict[str, Any]]) -> str:
         """
-        Format the RAG prompt with query and context.
+        Format the RAG prompt with query and document context.
         
         Args:
             query: User query.
-            context_set: Context set with retrieved documents.
+            documents: List of retrieved documents.
             
         Returns:
             Formatted prompt.
         """
+        # Extract text content from documents
+        context_docs = []
+        
+        for doc in documents:
+            if isinstance(doc, dict):
+                text = doc.get("text", "")
+                metadata = doc.get("metadata", {})
+            else:
+                text = getattr(doc, "page_content", str(doc))
+                metadata = getattr(doc, "metadata", {})
+            
+            source = metadata.get("source", "Unknown")
+            context_docs.append(f"Source: {source}\n{text}")
+        
+        context_text = "\n\n---\n\n".join(context_docs)
+        
         prompt = f"""
         Answer the question below based only on the provided context. If the context doesn't contain the information needed, say "I don't have enough information to answer this question" and don't make up an answer.
         
         Context:
-        {context_set.to_llm_context()}
+        {context_text}
         
         Question: {query}
         

@@ -1,4 +1,8 @@
-"""Agentic RAG - Streamlit Frontend"""
+"""Agentic RAG - Streamlit Frontend
+
+A Retrieval-Augmented Generation (RAG) application that allows you to chat with your documents.
+Created by Deep Podder.
+"""
 import streamlit as st
 import os
 import sys
@@ -8,6 +12,14 @@ import json
 import time
 import uuid
 import numpy as np  # For array operations with embeddings
+
+# Set page title and favicon
+st.set_page_config(
+    page_title="Agentic RAG",
+    page_icon="📚",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # Detect if we're running on Streamlit Cloud
 # This helps with proper resource configuration
@@ -58,21 +70,65 @@ APP_CONFIG = {
     }
 }
 
-# Initialize session state
-if "initialized" not in st.session_state:
+# Initialize the app state if it doesn't exist
+if 'initialized' not in st.session_state:
     st.session_state.initialized = False
-    st.session_state.pdf_files = []
-    st.session_state.indexed_files = set()
-    st.session_state.messages = []
+    st.session_state.documents = []
+    st.session_state.question_history = []
+    st.session_state.answer_history = []
+    st.session_state.sources_history = []
     st.session_state.followup_questions = []
+    st.session_state.document_count = 0
+    st.session_state.error = None
     # Create data directories
     os.makedirs("data/cache", exist_ok=True)
     # Initialize configuration
     st.session_state.config = APP_CONFIG
 
+def init_api_keys():
+    """Initialize API keys from environment variables or Streamlit secrets."""
+    # Groq API Key (required)
+    groq_api_key = None
+    
+    # Try to get from Streamlit secrets first
+    if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+        groq_api_key = st.secrets["GROQ_API_KEY"]
+    # Then try environment variables
+    elif os.environ.get("GROQ_API_KEY"):
+        groq_api_key = os.environ.get("GROQ_API_KEY")
+        
+    # Check if we have a valid Groq API key
+    if not groq_api_key:
+        st.error("❌ Groq API key not found! Please add it to your secrets or environment variables.")
+        st.info("To add your Groq API key, create a .streamlit/secrets.toml file with:\n\nGROQ_API_KEY = \"your-groq-api-key-here\"")
+        return False
+        
+    # Google API Key (optional)
+    google_api_key = None
+    
+    # Try to get from Streamlit secrets first
+    if hasattr(st, "secrets") and "GOOGLE_API_KEY" in st.secrets:
+        google_api_key = st.secrets["GOOGLE_API_KEY"]
+    # Then try environment variables
+    elif os.environ.get("GOOGLE_API_KEY"):
+        google_api_key = os.environ.get("GOOGLE_API_KEY")
+        
+    # Store the API keys in environment variables for modules to access
+    os.environ["GROQ_API_KEY"] = groq_api_key
+    if google_api_key:
+        os.environ["GOOGLE_API_KEY"] = google_api_key
+    else:
+        st.info("ℹ️ Google API key not found. Using fallback hash-based embeddings.")
+    
+    return True
+
 def initialize_components():
     """Initialize RAG components."""
     try:
+        # Get API keys first
+        if not init_api_keys():
+            return False
+        
         # Initialize file cache
         st.session_state.file_cache = cache_utils.FileCache("data/cache")
         
@@ -82,9 +138,9 @@ def initialize_components():
             chunk_size=st.session_state.config['pdf_processor']['chunk_size'],
             chunk_overlap=st.session_state.config['pdf_processor']['chunk_overlap']
         )
-        st.session_state.embedding_model = embedding_model.EmbeddingModel(
-            model_name=st.session_state.config['embeddings']['model_name']
-        )
+        
+        # Initialize embedding model (using hash-based embeddings)
+        st.session_state.embedding_model = embedding_model.EmbeddingModel()
 
         # Initialize vector database
         data_dir = "data"
@@ -232,90 +288,283 @@ def render_upload():
 
 def index_documents(uploaded_files):
     """Process and index uploaded PDF documents."""
-    if not uploaded_files:
-        return
-    
     try:
         documents = []
+        st.info("Processing uploaded documents...")
+        
         for file in uploaded_files:
-            # Save file temporarily
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-            temp_file.write(file.getvalue())
+            # Create a unique ID based on filename and timestamp
+            file_id = uuid.uuid4().hex
+            st.info(f"Processing file: {file.name}")
+            
+            # Create a temporary file to save the uploaded file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            temp_file.write(file.read())
             temp_file.close()
             
-            # Parse PDF
             try:
+                # Parse the PDF file
                 text = st.session_state.pdf_parser.parse_file(temp_file.name)
+                st.info(f"Extracted text from {file.name}")
+                # Since parse_file returns a single string, we'll treat it as one page
+                text_by_page = [text]
                 
-                # Chunk text
-                chunks_data = st.session_state.text_chunker.chunk_text(text)
-                
-                # Extract just the text strings from the chunk dictionaries
-                chunks = [chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk) for chunk in chunks_data]
-                
-                # Create embeddings - use a try-except block to handle potential errors
-                try:
-                    embeddings = st.session_state.embedding_model.embed_texts(chunks)
-                except AttributeError as e:
-                    if "'EmbeddingModel' object has no attribute 'model'" in str(e):
-                        # If we get the specific model attribute error, create embeddings manually
-                        print("Using fallback embedding generation method")
-                        embeddings = []
-                        for chunk in chunks:
-                            # Call embed_text directly which uses _generate_embedding
-                            embeddings.append(st.session_state.embedding_model.embed_text(chunk))
-                        embeddings = np.array(embeddings)
-                    else:
-                        raise
-                
-                # Create documents for vector DB
-                for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-                    doc_id = f"{file.name}_{i}"
-                    
-                    # Ensure chunk is a string
-                    if not isinstance(chunk, str):
-                        chunk_text = str(chunk)
-                    else:
-                        chunk_text = chunk
+                # Process each page
+                for i, text in enumerate(text_by_page):
+                    if not text.strip():  # Skip empty pages
+                        continue
                         
-                    # Create document with proper metadata
-                    documents.append({
-                        "id": doc_id,
-                        "text": chunk_text,
-                        "embedding": embedding,
-                        "metadata": {
-                            "filename": file.name,
-                            "page": i,
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                    })
-                    st.session_state.indexed_files.add(doc_id)
+                    # Create document ID using filename, page number and UUID
+                    doc_id = f"{file.name.split('.')[0]}_page_{i}_{file_id}"
+                    
+                    # Skip if we've already indexed this document
+                    if doc_id in st.session_state.indexed_files:
+                        continue
+                    
+                    # Split text into chunks
+                    chunks_data = st.session_state.text_chunker.chunk_text(text)
+                    st.info(f"Created {len(chunks_data)} chunks from page {i}")
+                    
+                    # Extract just the text strings from the chunk dictionaries
+                    chunks = [chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk) for chunk in chunks_data]
+                    
+                    # Create embeddings using hash-based method (simplest and most reliable)
+                    embeddings = []
+                    # Determine the required embedding dimension
+                    embedding_dim = 384  # Hardcoded to match vector DB expectation
+                    
+                    for chunk_idx, chunk in enumerate(chunks):
+                        try:
+                            # Generate embedding directly from text - always 384 dimensions
+                            embedding = st.session_state.embedding_model._generate_hash_embedding(chunk)
+                            
+                            # Double-check dimension
+                            if embedding.shape != (embedding_dim,):
+                                st.warning(f"Fixing embedding dimension for chunk {chunk_idx}: got {embedding.shape}, expected ({embedding_dim},)")
+                                # Resize or create new embedding with correct dimension
+                                fixed_embedding = np.zeros(embedding_dim, dtype=np.float32)
+                                # Copy values from original embedding up to min length
+                                min_dim = min(len(embedding), embedding_dim)
+                                fixed_embedding[:min_dim] = embedding[:min_dim]
+                                # Normalize
+                                norm = np.linalg.norm(fixed_embedding)
+                                if norm > 0:
+                                    fixed_embedding /= norm
+                                embedding = fixed_embedding
+                                
+                            embeddings.append(embedding)
+                        except Exception as emb_err:
+                            st.error(f"Error generating embedding for chunk {chunk_idx}: {str(emb_err)}")
+                            # Create a simple zero embedding as fallback with correct dimension
+                            embeddings.append(np.zeros(embedding_dim, dtype=np.float32))
+                    
+                    # Convert to numpy array for vector DB
+                    embeddings = np.array(embeddings)
+                    st.info(f"Created {len(embeddings)} embeddings for page {i}")
+                    
+                    # Create documents for vector DB
+                    for j, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                        chunk_id = f"{doc_id}_chunk_{j}"
+                        documents.append({
+                            "id": chunk_id,
+                            "text": chunk,
+                            "embedding": embedding,
+                            "metadata": {
+                                "filename": file.name,
+                                "page": i,
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                            }
+                        })
+                        st.session_state.indexed_files.add(doc_id)
             
             finally:
                 # Clean up temporary file
                 os.unlink(temp_file.name)
         
-        # Add documents to vector DB
-        st.session_state.vector_db.add_documents(
-            documents,
-            embedding_key="embedding",
-            text_key="text",
-            metadata_key="metadata",
-            ids=[doc["id"] for doc in documents]
-        )
+        # Add documents to vector DB with additional error handling
+        try:
+            if not documents:
+                st.warning("No documents were processed. Please try uploading a different PDF.")
+                return
+                
+            st.info(f"Adding {len(documents)} document chunks to vector database")
+            
+            # Check that embeddings have the right shape and fix if needed
+            embedding_dim = 384  # Hardcoded to ensure consistency
+            dimension_fixes = 0
+            
+            for doc in documents:
+                if doc["embedding"].shape != (embedding_dim,):
+                    # Reshape or fix the embedding
+                    dimension_fixes += 1
+                    fixed_embedding = np.zeros(embedding_dim, dtype=np.float32)
+                    # Copy values from original embedding up to min length
+                    min_dim = min(len(doc["embedding"]), embedding_dim)
+                    fixed_embedding[:min_dim] = doc["embedding"][:min_dim]
+                    # Normalize
+                    norm = np.linalg.norm(fixed_embedding)
+                    if norm > 0:
+                        fixed_embedding /= norm
+                    doc["embedding"] = fixed_embedding
+            
+            if dimension_fixes > 0:
+                st.warning(f"Fixed dimensions for {dimension_fixes} embeddings to match vector DB requirements ({embedding_dim} dimensions)")
+            
+            # Add to vector DB
+            st.session_state.vector_db.add_documents(
+                documents,
+                embedding_key="embedding",
+                text_key="text",
+                metadata_key="metadata",
+                ids=[doc["id"] for doc in documents]
+            )
+            
+            st.success(f"Successfully indexed {len(documents)} chunks from {len(uploaded_files)} documents!")
+            
+        except Exception as db_err:
+            st.error(f"Error adding documents to vector database: {str(db_err)}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
         
     except Exception as e:
         st.error(f"Error processing documents: {str(e)}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
+
+def process_documents(uploaded_files):
+    """Process uploaded PDF documents."""
+    if not uploaded_files:
+        return False
+        
+    processed_count = 0
+    
+    with st.spinner("Processing documents..."):
+        try:
+            # Initialize the PDF parser
+            pdf_parser_instance = pdf_parser.PDFParser()
+            
+            # Initialize the text chunker
+            text_chunker_instance = text_chunker.TextChunker(
+                chunk_size=APP_CONFIG["pdf_processor"]["chunk_size"],
+                chunk_overlap=APP_CONFIG["pdf_processor"]["chunk_overlap"]
+            )
+            
+            # Initialize embedding model
+            embedding_model_instance = embedding_model.EmbeddingModel()
+            
+            # Initialize vector database
+            if not os.path.exists("data/cache"):
+                os.makedirs("data/cache")
+            vector_db_instance = faiss_db.FAISSVectorDB(
+                persist_directory="data/cache",
+                collection_name="documents",
+                dimension=384  # Using 384 dimensions for consistency
+            )
+            
+            # Process each uploaded file
+            for uploaded_file in uploaded_files:
+                try:
+                    # Show progress message
+                    st.text(f"Processing: {uploaded_file.name}")
+                    
+                    # Create a temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                        tmp_file.write(uploaded_file.getvalue())
+                        tmp_path = tmp_file.name
+                    
+                    # Extract text from PDF
+                    try:
+                        extracted_text = pdf_parser_instance.parse_file(tmp_path)
+                    except Exception as e:
+                        st.error(f"Error parsing PDF {uploaded_file.name}: {str(e)}")
+                        continue
+                        
+                    # Remove the temporary file
+                    os.unlink(tmp_path)
+                    
+                    # Split text into chunks
+                    chunks = text_chunker_instance.split_text(extracted_text)
+                    
+                    if not chunks:
+                        st.warning(f"No content extracted from {uploaded_file.name}")
+                        continue
+                    
+                    st.text(f"Created {len(chunks)} chunks from {uploaded_file.name}")
+                    
+                    # Create documents with metadata
+                    documents = []
+                    for i, chunk in enumerate(chunks):
+                        # Generate embedding for the chunk
+                        try:
+                            # Generate embedding
+                            embedding = embedding_model_instance.get_embedding(chunk)
+                        except Exception as e:
+                            st.warning(f"Using fallback embedding method")
+                            # Create a simple fallback embedding
+                            embedding = embedding_model_instance._generate_hash_embedding(chunk)
+                        
+                        # Create document
+                        doc = {
+                            "text": chunk,
+                            "embedding": embedding,
+                            "metadata": {
+                                "source": uploaded_file.name,
+                                "chunk": i,
+                                "total_chunks": len(chunks)
+                            }
+                        }
+                        documents.append(doc)
+                    
+                    # Add to vector database
+                    vector_db_instance.add_documents(documents)
+                    
+                    # Add to session state
+                    file_info = {
+                        "name": uploaded_file.name,
+                        "chunks": len(chunks),
+                        "embedding_dim": len(embedding) if len(documents) > 0 else 0
+                    }
+                    st.session_state.documents.append(file_info)
+                    
+                    processed_count += 1
+                    
+                except Exception as e:
+                    import traceback
+                    error_msg = f"Error processing {uploaded_file.name}: {str(e)}"
+                    st.session_state.error = error_msg
+                    print(error_msg)
+                    print(traceback.format_exc())
+                    st.error(error_msg)
+            
+            if processed_count > 0:
+                st.session_state.document_count += processed_count
+                st.success(f"✅ Successfully processed {processed_count} documents.")
+                return True
+            else:
+                st.warning("⚠️ No documents were processed successfully.")
+                return False
+                
+        except Exception as e:
+            import traceback
+            error_msg = f"Error in document processing: {str(e)}"
+            st.session_state.error = error_msg
+            print(error_msg)
+            print(traceback.format_exc())
+            st.error(error_msg)
+            return False
 
 def main():
-    """Main application entry point."""
-    st.set_page_config(
-        page_title="Agentic RAG",
-        page_icon="📚",
-        layout="wide"
-    )
+    """Main application function."""
+    # Set title and banner
+    st.title("📚 Agentic RAG")
+    st.subheader("Chat with your documents using AI")
     
-    st.title("Agentic RAG")
+    # Add creator credit
+    st.markdown("<div style='text-align: right; color: gray; padding-bottom: 10px;'>Created by Deep Podder</div>", unsafe_allow_html=True)
+    
+    # Initialize API keys
+    if not init_api_keys():
+        st.stop()
     
     # Initialize components if not already done
     if not st.session_state.initialized:

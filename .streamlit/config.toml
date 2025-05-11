@@ -2,10 +2,23 @@
 # Disable the watchdog that monitors file changes
 fileWatcherType = "none"
 
-# If you want to selectively disable only for certain modules, you can use:
-# enableXsrfProtection = false
-# enableStaticServing = true
+# Enable efficient static file serving
+enableStaticServing = true
+
+# Increase max upload size (in MB) for PDFs
+maxUploadSize = 200
 
 [runner]
 # Sets the number of seconds to wait for the script to stop when rerunning
 fastReruns = true
+
+[theme]
+# Custom theme colors
+primaryColor = "#2E86C1"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8F9FA"
+textColor = "#262730"
+
+[browser]
+# Make the app more responsive
+gatherUsageStats = false

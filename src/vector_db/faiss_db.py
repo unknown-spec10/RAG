@@ -61,7 +61,12 @@ class FAISSVectorDB:
             with open(metadata_path, 'rb') as f:
                 return pickle.load(f)
         else:
-            return {}
+            # Initialize with empty lists for parallel arrays
+            return {
+                "ids": [],
+                "texts": [],
+                "metadatas": []
+            }
     
     def add_documents(
         self,
@@ -97,7 +102,18 @@ class FAISSVectorDB:
         # Add embeddings to index
         self.index.add(embeddings)
         
-        # Update metadata
+        # Update metadata - store in parallel arrays
+        if "ids" not in self.metadata:
+            self.metadata["ids"] = []
+            self.metadata["texts"] = []
+            self.metadata["metadatas"] = []
+            
+        # Add new documents
+        self.metadata["ids"].extend(ids)
+        self.metadata["texts"].extend(texts)
+        self.metadata["metadatas"].extend(metadatas)
+        
+        # Also keep the old format for backward compatibility
         for doc_id, text, metadata in zip(ids, texts, metadatas):
             self.metadata[doc_id] = {
                 "text": text,
@@ -136,33 +152,123 @@ class FAISSVectorDB:
         Returns:
             Query results.
         """
-        if isinstance(query_embedding, list):
-            query_embedding = np.array(query_embedding, dtype=np.float32)
+        # Debug the input
+        print(f"Query embedding input type: {type(query_embedding)}")
         
-        # Normalize the query embedding
+        if query_embedding is None:
+            print("Error: Query embedding is None")
+            return {
+                "ids": [],
+                "documents": [],
+                "metadatas": [],
+                "distances": []
+            }
+        
+        # Ensure query_embedding is numpy array
+        if not isinstance(query_embedding, np.ndarray):
+            try:
+                query_embedding = np.array(query_embedding, dtype=np.float32)
+            except Exception as e:
+                print(f"Error converting query embedding to numpy array: {str(e)}")
+                return {
+                    "ids": [],
+                    "documents": [],
+                    "metadatas": [],
+                    "distances": []
+                }
+        
+        # Flatten if it's a 2D embedding with shape (1, D)
+        if len(query_embedding.shape) > 1 and query_embedding.shape[0] == 1:
+            query_embedding = query_embedding[0]  # Extract the vector
+            print(f"Flattened query embedding shape: {query_embedding.shape}")
+        
+        # Ensure it's 1D before FAISS search
+        if len(query_embedding.shape) > 1:
+            print(f"Warning: Reshaping multi-dimensional embedding: {query_embedding.shape}")
+            query_embedding = query_embedding.reshape(-1)  # Flatten to 1D
+        
+        # Make sure the dimensions match expected size (384)
+        if query_embedding.shape[0] != self.dimension:
+            print(f"Warning: Query embedding dimension {query_embedding.shape[0]} doesn't match index dimension {self.dimension}")
+            # Create a fixed-size embedding
+            fixed_embedding = np.zeros(self.dimension, dtype=np.float32)
+            # Copy what we can
+            min_dim = min(query_embedding.shape[0], self.dimension)
+            fixed_embedding[:min_dim] = query_embedding[:min_dim]
+            query_embedding = fixed_embedding
+            
+        # Debug information
+        print(f"Final query embedding shape: {query_embedding.shape}, dtype: {query_embedding.dtype}")
+        
+        # Reshape for FAISS (expects 2D array with shape [n_queries, dimension])
         query_embedding = query_embedding.reshape(1, -1)
         
         # Search in FAISS
-        distances, indices = self.index.search(query_embedding, n_results)
+        try:
+            D, I = self.index.search(query_embedding, n_results)
+            print(f"FAISS search successful. Results shape: D={D.shape}, I={I.shape}")
+        except Exception as e:
+            import traceback
+            print(f"Error in FAISS search: {str(e)}")
+            print(f"Query embedding shape: {query_embedding.shape}, dtype: {query_embedding.dtype}")
+            print(traceback.format_exc())
+            # Return empty results
+            return {
+                "ids": [],
+                "documents": [],
+                "metadatas": [],
+                "distances": []
+            }
         
-        # Get results
+        # Extract results
         results = {
             "ids": [],
-            "distances": distances[0].tolist(),
             "documents": [],
-            "metadatas": []
+            "metadatas": [],
+            "distances": []
         }
         
-        for idx in indices[0]:
-            if idx >= len(self.metadata):
-                continue
-                
-            doc_id = list(self.metadata.keys())[idx]
-            doc_data = self.metadata[doc_id]
-            
-            results["ids"].append(doc_id)
-            results["documents"].append(doc_data["text"])
-            results["metadatas"].append(doc_data["metadata"])
+        # Check if we have parallel lists in metadata
+        if all(key in self.metadata for key in ["ids", "texts", "metadatas"]):
+            # Using the new parallel array format
+            for i, (idx, distance) in enumerate(zip(I[0], D[0])):
+                if idx != -1 and idx < len(self.metadata["ids"]):  # Valid index
+                    doc_id = self.metadata["ids"][idx]
+                    text = self.metadata["texts"][idx]
+                    metadata = self.metadata["metadatas"][idx]
+                    
+                    # Apply filter criteria if provided
+                    if filter_criteria and not self._matches_filter(metadata, filter_criteria):
+                        continue
+                    
+                    results["ids"].append(doc_id)
+                    results["documents"].append(text)
+                    results["metadatas"].append(metadata)
+                    results["distances"].append(float(distance))
+        else:
+            # Fallback to the old dictionary format
+            for i, (idx, distance) in enumerate(zip(I[0], D[0])):
+                if idx != -1:  # -1 means no result found
+                    # Get document ID for this index - we need to search through all docs
+                    found = False
+                    for doc_id, info in self.metadata.items():
+                        # Skip non-document entries
+                        if not isinstance(doc_id, str) or not isinstance(info, dict):
+                            continue
+                            
+                        # Apply filter criteria if provided
+                        if filter_criteria and not self._matches_filter(info["metadata"], filter_criteria):
+                            continue
+                        
+                        results["ids"].append(doc_id)
+                        results["documents"].append(info["text"])
+                        results["metadatas"].append(info["metadata"])
+                        results["distances"].append(float(distance))
+                        found = True
+                        break
+                        
+                    if found and len(results["ids"]) >= n_results:
+                        break
         
         return results
     
@@ -176,7 +282,13 @@ class FAISSVectorDB:
         Returns:
             Document dictionary if found, None otherwise.
         """
-        return self.metadata.get(doc_id)
+        if doc_id in self.metadata["ids"]:
+            idx = self.metadata["ids"].index(doc_id)
+            return {
+                "text": self.metadata["texts"][idx],
+                "metadata": self.metadata["metadatas"][idx]
+            }
+        return None
     
     def delete_document(self, doc_id: str) -> bool:
         """
@@ -188,20 +300,53 @@ class FAISSVectorDB:
         Returns:
             True if deleted, False otherwise.
         """
-        if doc_id in self.metadata:
+        if doc_id in self.metadata["ids"]:
+            idx = self.metadata["ids"].index(doc_id)
+            del self.metadata["ids"][idx]
+            del self.metadata["texts"][idx]
+            del self.metadata["metadatas"][idx]
             del self.metadata[doc_id]
             self._save_metadata()
             return True
         return False
     
     def count(self) -> int:
-        """
-        Get the number of documents in the collection.
+        """Get the number of documents in the database."""
+        try:
+            return self.index.ntotal
+        except Exception as e:
+            print(f"Error counting documents: {str(e)}")
+            return 0
+            
+    def get_all_documents(self) -> Dict[str, List]:
+        """Get all documents from the database.
         
         Returns:
-            Number of documents.
+            Dictionary with lists of documents, metadatas, ids and dummy distances.
         """
-        return len(self.metadata)
+        try:
+            if not self.metadata or not self.metadata.get("texts") or not self.metadata.get("ids"):
+                print("No documents found in database")
+                return {}
+                
+            doc_ids = self.metadata.get("ids", [])
+            texts = self.metadata.get("texts", [])
+            metadatas = self.metadata.get("metadatas", [])
+            
+            # Create a dummy distances list (not used for keyword search)
+            distances = [1.0] * len(doc_ids)
+            
+            return {
+                "ids": doc_ids,
+                "documents": texts,
+                "metadatas": metadatas,
+                "distances": distances
+            }
+        except Exception as e:
+            import traceback
+            print(f"Error getting all documents: {str(e)}")
+            print(traceback.format_exc())
+            return {}
     
     def update_document(
         self,
