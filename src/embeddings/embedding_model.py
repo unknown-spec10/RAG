@@ -4,8 +4,6 @@ import numpy as np
 import hashlib
 import re
 
-# No PyTorch, no sentence-transformers - completely lightweight
-
 class EmbeddingModel:
     """Lightweight embedding model using simple text hashing."""
     
@@ -79,55 +77,21 @@ class EmbeddingModel:
         """Generate embedding for a query."""
         return self._generate_embedding(query)
     
-    def embed_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Generate embeddings for a list of documents."""
-        return [{
-            **doc,
-            "embedding": self._generate_embedding(doc["text"] if "text" in doc else str(doc))
-        } for doc in documents]
-    
-    # Note: embed_texts is already implemented above
-    
-    def embed_documents(self, documents: List[Dict[str, Any]], 
-                        text_key: str = "text") -> List[Dict[str, Any]]:
-        """
-        Generate embeddings for a list of document chunks.
-        
-        Args:
-            documents: List of document dictionaries, each with a text field.
-            text_key: Key to access the text in each document.
-            
-        Returns:
-            List of document dictionaries with added embeddings.
-        """
-        # Use the implementation we already have, but make it work with text_key parameter
+    def embed_documents(self, documents: List[Dict[str, Any]], text_key: str = "text") -> List[Dict[str, Any]]:
+        """Generate embeddings for a list of document chunks."""
         return [{
             **doc,
             "embedding": self._generate_embedding(doc.get(text_key, ""))
         } for doc in documents]
     
     def similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
-        """
-        Calculate cosine similarity between two embeddings.
-        
-        Args:
-            embedding1: First embedding.
-            embedding2: Second embedding.
-            
-        Returns:
-            Cosine similarity score.
-        """
+        """Calculate cosine similarity between two embeddings."""
         return np.dot(embedding1, embedding2) / (
             np.linalg.norm(embedding1) * np.linalg.norm(embedding2)
         )
         
     def get_model_info(self) -> Dict[str, Any]:
-        """
-        Get information about the embedding model.
-        
-        Returns:
-            Dictionary with model information.
-        """
+        """Get information about the embedding model."""
         return {
             "model_name": self.model_name,
             "embedding_dimension": self.embedding_dim,
