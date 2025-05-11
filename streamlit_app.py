@@ -80,6 +80,7 @@ if 'initialized' not in st.session_state:
     st.session_state.followup_questions = []
     st.session_state.document_count = 0
     st.session_state.error = None
+    st.session_state.messages = []  # Initialize messages for chat history
     # Create data directories
     os.makedirs("data/cache", exist_ok=True)
     # Initialize configuration
