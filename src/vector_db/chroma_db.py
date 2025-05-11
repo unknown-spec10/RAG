@@ -72,11 +72,10 @@ class ChromaVectorDB:
                 settings=Settings(
                     chroma_db_impl="rest",
                     host="chroma-server",  # This would be your Chroma server endpoint
-                    port=8000
+                    port=8000,
+                    allow_reset=True
                 )
-                allow_reset=True
             )
-        )
         
         # List all collections to check if our collection exists
         all_collections = self.client.list_collections()

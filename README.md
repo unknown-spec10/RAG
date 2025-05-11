@@ -1,6 +1,47 @@
-# Agentic RAG Knowledge Base
+# Agentic RAG
+
+A Retrieval-Augmented Generation (RAG) application that allows you to chat with your documents using advanced LLMs via the Groq API.
+
+## Features
+
+- Upload PDF documents for processing
+- Chat with your documents using state-of-the-art language models
+- View sources for generated responses
+- Clean and intuitive user interface
+
+## Streamlit Cloud Deployment
+
+1. Fork this repository to your GitHub account
+2. Create a new app on [Streamlit Cloud](https://streamlit.io/cloud)
+3. Connect to your forked repository
+4. Configure the app settings with the main file as `streamlit_app.py`
+5. Add your Groq API key as a secret in the Streamlit Cloud dashboard:
+   - Go to Advanced Settings > Secrets
+   - Add `GROQ_API_KEY = "your-api-key-here"`
+
+## Local Development
+
+1. Clone this repository
+2. Create a virtual environment: `python -m venv venv`
+3. Activate the virtual environment:
+   - Windows: `venv\Scripts\activate`
+   - Linux/Mac: `source venv/bin/activate`
+4. Install dependencies: `pip install -r requirements.txt`
+5. Create a `.streamlit/secrets.toml` file with your Groq API key:
+   ```toml
+   GROQ_API_KEY = "your-api-key-here"
+   ```
+6. Run the application: `streamlit run streamlit_app.py`
+
+## Requirements
+
+- Python 3.9+
+- Groq API key
+
+---
 
 Created and maintained by Deep Podder
+[GitHub](https://github.com/unknown-spec10) | [LinkedIn](http://www.linkedin.com/in/deeppodder2005)
 
 A powerful agentic RAG (Retrieval Augmented Generation) application that allows you to add PDF documents to your knowledge base and ask questions based on their content.
 

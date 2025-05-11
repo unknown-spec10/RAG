@@ -1,7 +1,7 @@
 """Retriever module for fetching relevant documents based on a query."""
 from typing import List, Dict, Any, Optional
 import numpy as np
-from src.vector_db.chroma_db import ChromaVectorDB
+from src.vector_db.faiss_db import FAISSVectorDB
 from src.embeddings.embedding_model import EmbeddingModel
 
 
@@ -10,7 +10,7 @@ class RAGRetriever:
     
     def __init__(
         self, 
-        vector_db: ChromaVectorDB,
+        vector_db: FAISSVectorDB,
         embedding_model: EmbeddingModel,
         top_k: int = 5
     ):
@@ -43,33 +43,60 @@ class RAGRetriever:
         Returns:
             List of retrieved documents.
         """
-        # Generate embedding for the query
-        query_embedding = self.embedding_model.embed_text(query)
-        
-        # Query the vector database
-        results = self.vector_db.query(
-            query_embedding=query_embedding,
-            n_results=self.top_k,
-            filter_criteria=filter_criteria
-        )
-        
-        # Process results
-        documents = []
-        if results and "ids" in results and results["ids"]:
-            for i, doc_id in enumerate(results["ids"][0]):
-                doc = {
+        try:
+            # Check if vector db is initialized properly
+            if self.vector_db is None:
+                print("Error: Vector database is not initialized")
+                return []
+                
+            # Check if there are any documents in the database
+            doc_count = self.vector_db.count()
+            if doc_count == 0:
+                print("Warning: No documents found in the vector database")
+                return []
+                
+            # Generate embedding for the query
+            query_embedding = self.embedding_model.embed_text(query)
+            
+            # Query the vector database
+            results = self.vector_db.query(
+                query_embedding=query_embedding,
+                n_results=min(self.top_k, doc_count),  # Make sure not to request more docs than exist
+                filter_criteria=filter_criteria
+            )
+            
+            # Make sure results contain the expected keys
+            if "documents" not in results or not results["documents"]:
+                print(f"Warning: No documents returned in query results. Keys: {list(results.keys())}")
+                return []
+            
+            # Extract documents
+            documents = []
+            for i, (doc_text, metadata, doc_id, distance) in enumerate(zip(
+                results.get("documents", []),
+                results.get("metadatas", [{}] * len(results.get("documents", []))),
+                results.get("ids", ["unknown"] * len(results.get("documents", []))),
+                results.get("distances", [0.0] * len(results.get("documents", [])))
+            )):
+                documents.append({
+                    "text": doc_text,
+                    "metadata": metadata,
                     "id": doc_id,
-                    "text": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                    "similarity": results.get("distances", [[]])[0][i] if results.get("distances") else None
-                }
-                documents.append(doc)
-        
-        # Rerank if requested
-        if rerank and documents:
-            documents = self._rerank_documents(query, documents)
-        
-        return documents
+                    "score": distance
+                })
+                
+            # Optional reranking
+            if rerank and documents:
+                documents = self._rerank_documents(query, documents)
+                
+            # Add debug information about retrieved documents
+            print(f"Retrieved {len(documents)} documents for query: {query[:50]}...")
+            return documents
+        except Exception as e:
+            import traceback
+            print(f"Error retrieving documents: {str(e)}")
+            print(traceback.format_exc())
+            return []
     
     def _rerank_documents(
         self, 

@@ -14,7 +14,7 @@ class Config:
     
     DEFAULT_CONFIG = {
         "pdf_processor": {
-            "use_pdfplumber": False,
+
             "chunk_size": 1000,
             "chunk_overlap": 200,
             "storage_type": "cloud",  # Can be 'cloud' or 'local'
@@ -35,9 +35,9 @@ class Config:
         },
         "llm": {
             "model_name": "llama3",
-            "provider": "ollama",  # Can be 'ollama' or 'groq'
-            "groq_api_key": None,  # Groq API key if using Groq
-            "groq_model": "llama2-70b-chat",  # Default Groq model
+            "provider": "groq",  # Can be 'ollama' or 'groq'
+            "groq_api_key": os.getenv("GROQ_API_KEY"),  # Groq API key if using Groq
+            "groq_model": "mixtral-8x7b",  # Default Groq model
             "temperature": 0.1,
             "context_window": 8192,
             "max_tokens": 1024,

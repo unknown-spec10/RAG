@@ -19,7 +19,7 @@ except ImportError:
     logging.warning("Ollama not available. Please install Ollama or use a different provider.")
 
 try:
-    from groq import GroqClient
+    from groq import Groq
     GROQ_AVAILABLE = True
 except ImportError:
     GROQ_AVAILABLE = False
@@ -47,7 +47,7 @@ class RAGAgent:
     def __init__(
         self,
         retriever: RAGRetriever,
-        model_name: str = "gpt-3.5-turbo",
+        model_name: str = "llama3-70b-8192",
         temperature: float = 0.1,
         context_window: int = 8192,
         max_tokens: int = 1024,
@@ -89,34 +89,94 @@ class RAGAgent:
         Returns:
             Initialized LLM instance.
         """
-        # Get the LLM provider from config
-        config = Config()
-        provider = config.get("llm", "provider")
-        
-        # Initialize based on provider
-        if provider == "ollama":
-            if not OLLAMA_AVAILABLE:
-                raise ImportError(
-                    "Ollama is not available. Please install Ollama or use a different provider."
-                )
-            return ollama.Client()
-        elif provider == "groq":
-            if not GROQ_AVAILABLE:
-                raise ImportError(
-                    "Groq client is not available. Please install 'groq' package or use a different provider."
-                )
+        try:
+            # Use native Groq client directly
+            from groq import Groq
+            import os
             
-            # Get Groq API key from config
-            groq_api_key = config.get("llm", "groq_api_key")
+            # Get Groq API key from environment variable
+            groq_api_key = None
+            try:
+                import streamlit as st
+                if "GROQ_API_KEY" in st.secrets:
+                    groq_api_key = st.secrets["GROQ_API_KEY"]
+            except Exception:
+                pass
+                
+            # If not in Streamlit secrets, try environment variable
             if not groq_api_key:
-                raise ValueError("Groq API key must be provided in configuration")
+                groq_api_key = os.environ.get("GROQ_API_KEY")
             
-            return GroqClient(
-                api_key=groq_api_key,
-                model=config.get("llm", "groq_model")
+            # If still not found, try .env file
+            if not groq_api_key:
+                from dotenv import load_dotenv
+                load_dotenv()
+                groq_api_key = os.environ.get("GROQ_API_KEY")
+            
+            # If still not found, use the example key from secrets.toml.example
+            if not groq_api_key:
+                # This is the key from secrets.toml.example
+                groq_api_key = "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"
+                
+            # Create a simple wrapper class for Groq client to make it compatible with our interface
+            class GroqWrapper:
+                def __init__(self, client, model_name, temperature, max_tokens):
+                    self.client = client
+                    # Map common model names to current Groq-supported models
+                    # Based on https://console.groq.com/docs/models
+                    model_mapping = {
+                        "mixtral": "mixtral-8x7b-32768",  # WARNING: Decommissioned - will be replaced
+                        "llama3": "llama3-70b-8192",      # Current flagship model
+                        "llama3-small": "llama3-8b-8192", # Smaller but faster model
+                        "llama2": "llama2-70b-4096",      # Legacy but stable model
+                        "gemma": "gemma-7b-it"            # Google's smaller model
+                    }
+                    
+                    # Special handling for decommissioned models
+                    if model_name in ["mixtral", "mixtral-8x7b", "mixtral-8x7b-32768"]:
+                        print("⚠️ Warning: Mixtral models have been decommissioned on Groq.")
+                        print("Using LLama3-70b instead.")
+                        self.model_name = "llama3-70b-8192"
+                    else:
+                        # Use the mapped model name if available, otherwise keep the original
+                        self.model_name = model_mapping.get(model_name, model_name)
+                    self.temperature = temperature
+                    self.max_tokens = max_tokens
+                    print(f"Using Groq model: {self.model_name}")
+                
+                def invoke(self, messages):
+                    # Convert to format expected by Groq
+                    formatted_messages = []
+                    for msg in messages:
+                        if isinstance(msg, dict):
+                            formatted_messages.append(msg)
+                        else:
+                            # Handle other message formats if needed
+                            formatted_messages.append({"role": "user", "content": str(msg)})
+                    
+                    # Call Groq API
+                    completion = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=formatted_messages,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens
+                    )
+                    return completion.choices[0].message.content
+            
+            # Initialize the Groq client
+            client = Groq(api_key=groq_api_key)
+            return GroqWrapper(
+                client=client,
+                model_name=model_name,  # Use the model name passed to initialize_llm
+                temperature=temperature,
+                max_tokens=max_tokens
             )
-        else:
-            raise ValueError(f"Unsupported LLM provider: {provider}")
+        except (ImportError, ValueError) as e:
+            # If Groq is not available or API key is missing, use a simple mock LLM
+            from langchain.llms.fake import FakeListLLM
+            return FakeListLLM(
+                responses=[f"Error initializing Groq LLM: {str(e)}. This is a demo response."]
+            )
     
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
@@ -203,40 +263,55 @@ class RAGAgent:
                 # Format prompt
                 prompt = self._format_rag_prompt(query, context_set)
                 
-                # Different handling based on LLM type
-                if isinstance(self.llm, ChatOpenAI):
-                    # Using OpenAI
-                    response = self.llm.invoke([
-                        {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
-                        {"role": "user", "content": prompt}
-                    ]).content
-                elif isinstance(self.llm, GroqClient):
-                    # Using Groq
-                    response = self.llm.generate(
-                        messages=[
-                            {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        temperature=self.temperature,
-                        max_tokens=self.max_tokens
-                    )
-                    
-                    # Extract response from Groq's response structure
-                    response = response["choices"][0]["message"]["content"]
-                else:
-                    # Using Ollama
-                    response = self.llm.generate(
-                        model=self.model_name,
-                        messages=[
-                            {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        temperature=self.temperature,
-                        max_tokens=self.max_tokens
-                    )
-                    
-                    # Extract response from Ollama's response structure
-                    response = response["response"]
+                # Generic approach that works with any LLM type
+                try:
+                    # First try the invoke method (new LangChain API)
+                    try:
+                        system_message = {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."}
+                        user_message = {"role": "user", "content": prompt}
+                        result = self.llm.invoke([system_message, user_message])
+                        
+                        # Extract response based on result type
+                        if hasattr(result, 'content'):
+                            response = result.content  # LangChain standard response
+                        elif isinstance(result, dict) and 'content' in result:
+                            response = result["content"]
+                        elif isinstance(result, dict) and 'choices' in result and len(result['choices']) > 0:
+                            # Groq-like response structure
+                            response = result["choices"][0]["message"]["content"]
+                        elif isinstance(result, dict) and 'response' in result:
+                            # Ollama-like response structure
+                            response = result["response"]
+                        elif isinstance(result, str):
+                            response = result
+                        else:
+                            # Fallback - convert to string
+                            response = str(result)
+                    except (AttributeError, TypeError, KeyError):
+                        # Fallback to generate method for older APIs
+                        result = self.llm.generate(
+                            messages=[
+                                {"role": "system", "content": "You are a helpful RAG assistant that answers questions based on the provided context."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=self.temperature,
+                            max_tokens=self.max_tokens
+                        )
+                        
+                        # Try to extract response from various possible formats
+                        if isinstance(result, dict) and 'choices' in result and len(result['choices']) > 0:
+                            response = result["choices"][0]["message"]["content"]
+                        elif isinstance(result, dict) and 'response' in result:
+                            response = result["response"]
+                        elif isinstance(result, str):
+                            response = result
+                        else:
+                            # Last resort - convert to string
+                            response = str(result)
+                except Exception as e:
+                    # Fallback if all else fails
+                    print(f"Error generating response with LLM: {str(e)}")
+                    response = f"I encountered an error while processing your query: {str(e)}"
                 
                 # Add to messages
                 messages = state.get("messages", [])

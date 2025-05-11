@@ -1,25 +1,24 @@
+# Core dependencies
+streamlit>=1.30.0
+python-dotenv>=1.0.0
+pydantic>=2.4.0
+
 # PDF parsing
-pdfplumber
+pdfplumber>=0.10.0
 
-# Text processing and chunking
-langchain
-langchain-text-splitters
+# Embeddings and vector database
+sentence-transformers>=2.2.2
+huggingface-hub>=0.17.0
+faiss-cpu>=1.7.4
 
-# Embeddings
-sentence-transformers
+# LLM and orchestration
+langchain>=0.1.0
+langchain-text-splitters>=0.0.1
+langchain-community>=0.0.11
+langchain-core>=0.1.8
+langgraph>=0.0.19
+groq>=0.4.0
 
-# Vector Database
-faiss-cpu
-
-# LLM and Orchestration
-langchain-community
-langchain-core
-langgraph
-groq
-
-# Frontend
-streamlit
-
-# Utils
-python-dotenv
-pydantic
+# Development dependencies (optional for deployment)
+pylint>=2.17.0
+black>=23.11.0
