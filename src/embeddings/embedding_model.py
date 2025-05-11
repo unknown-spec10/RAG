@@ -86,17 +86,7 @@ class EmbeddingModel:
             "embedding": self._generate_embedding(doc["text"] if "text" in doc else str(doc))
         } for doc in documents]
     
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
-        """
-        Generate embeddings for multiple texts.
-        
-        Args:
-            texts: List of texts to embed.
-            
-        Returns:
-            Numpy array of embeddings.
-        """
-        return self.model.encode(texts, normalize_embeddings=True, batch_size=32)
+    # Note: embed_texts is already implemented above
     
     def embed_documents(self, documents: List[Dict[str, Any]], 
                         text_key: str = "text") -> List[Dict[str, Any]]:
@@ -110,17 +100,11 @@ class EmbeddingModel:
         Returns:
             List of document dictionaries with added embeddings.
         """
-        texts = [doc.get(text_key, "") for doc in documents]
-        embeddings = self.embed_texts(texts)
-        
-        # Add embeddings to documents
-        for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
-            documents[i] = {
-                **doc,
-                "embedding": embedding
-            }
-            
-        return documents
+        # Use the implementation we already have, but make it work with text_key parameter
+        return [{
+            **doc,
+            "embedding": self._generate_embedding(doc.get(text_key, ""))
+        } for doc in documents]
     
     def similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
         """
@@ -148,5 +132,5 @@ class EmbeddingModel:
             "model_name": self.model_name,
             "embedding_dimension": self.embedding_dim,
             "device": self.device,
-            "max_sequence_length": self.model.get_max_seq_length()
+            "max_sequence_length": 512  # Default reasonable value
         }
