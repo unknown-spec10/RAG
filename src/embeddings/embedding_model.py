@@ -1,115 +1,90 @@
-"""Embedding model module for text vectors."""
+"""Simple embedding model module for text vectors."""
 from typing import List, Dict, Any, Optional, Union
-from sentence_transformers import SentenceTransformer
 import numpy as np
-import torch
-import os
-import sys
+import hashlib
+import re
 
-# Apply critical PyTorch settings for cloud environments
-torch.set_grad_enabled(False)  # Disable gradient tracking globally
-os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Disable parallelism in tokenizers
-
-# Patch PyTorch to avoid meta tensor errors on cloud platforms
-original_to = torch.nn.Module.to
-def safe_to_wrapper(self, *args, **kwargs):
-    try:
-        return original_to(self, *args, **kwargs)
-    except RuntimeError as e:
-        if "meta tensor" in str(e):
-            print(f"⚠️ Caught meta tensor error, falling back to CPU. Error: {e}")
-            # Force device to CPU for this call
-            if 'device' in kwargs:
-                kwargs['device'] = 'cpu'
-            elif len(args) > 0 and isinstance(args[0], (str, torch.device)):
-                args = list(args)
-                args[0] = 'cpu'
-                args = tuple(args)
-            return original_to(self, *args, **kwargs)
-        else:
-            raise
-
-# Apply the patched method
-torch.nn.Module.to = safe_to_wrapper
-
+# No PyTorch, no sentence-transformers - completely lightweight
 
 class EmbeddingModel:
-    """Class for generating embeddings from text using sentence transformers."""
+    """Lightweight embedding model using simple text hashing."""
     
     def __init__(
         self, 
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "lightweight",
         device: Optional[str] = None
     ):
-        """
-        Initialize the embedding model.
+        """Initialize the lightweight embedding model."""
+        print("✅ Using lightweight embedding model for compatibility with Streamlit Cloud")
+        self.model_name = "lightweight-hash-embeddings"
+        self.device = "cpu"  # No GPU required
+        self.embedding_dim = 384  # Standard dimension for compatibility
+    
+    def _generate_embedding(self, text: str) -> np.ndarray:
+        """Generate a deterministic embedding from text using hashing."""
+        # Normalize text: lowercase, remove punctuation, extra spaces
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text)
+        text = re.sub(r'\s+', ' ', text).strip()
         
-        Args:
-            model_name: Name of the sentence-transformers model to use.
-                Options include: 'all-MiniLM-L6-v2', 'all-mpnet-base-v2', 
-                'bge-small-en-v1.5', 'bge-base-en-v1.5'
-            device: Device to use for inference ('cpu', 'cuda', or None for auto).
-        """
-        self.model_name = model_name
-        self.device = "cpu"  # Force CPU for all deployments to avoid memory issues
+        # Get word frequency features
+        words = text.split()
+        total_words = len(words)
         
-        # Use a try/except block with multiple fallback strategies
-        for attempt in range(3):  # Try up to 3 different strategies
-            try:
-                if attempt == 0:
-                    # First attempt: Standard initialization with CPU
-                    self.model = SentenceTransformer(model_name, device=self.device)
-                elif attempt == 1:
-                    # Second attempt: With reduced cache and explicit settings
-                    print("⚠️ First attempt failed. Trying with reduced cache...")
-                    os.environ["TRANSFORMERS_CACHE"] = os.path.join(os.getcwd(), "model_cache")
-                    os.environ["HF_HOME"] = os.path.join(os.getcwd(), "model_cache")
-                    self.model = SentenceTransformer(model_name, device=self.device)
-                else:
-                    # Final attempt: Use a minimal model with absolute minimal settings
-                    print("⚠️ Second attempt failed. Falling back to minimal model...")
-                    # Use the smallest model available that still works well
-                    fallback_model = "paraphrase-MiniLM-L3-v2"  # Tiny 30MB model
-                    self.model_name = fallback_model
-                    self.model = SentenceTransformer(fallback_model, device=self.device)
-                
-                # If we reach here, initialization worked
-                self.embedding_dim = self.model.get_sentence_embedding_dimension()
-                print(f"✅ Successfully loaded model {self.model_name} with dimension {self.embedding_dim}")
-                break
-                
-            except Exception as e:
-                print(f"❌ Error loading model (attempt {attempt+1}/3): {str(e)}")
-                if attempt == 2:  # If all attempts failed
-                    print("❌ All model loading attempts failed. Application may not function correctly.")
-                    # Create a dummy model with basic functionality
-                    self.embedding_dim = 384  # Standard dimension for small models
-                    self.model = None  # No model available
-                    
-                    # Define a method to generate random embeddings when model fails
-                    def dummy_encode(texts, normalize_embeddings=True):
-                        if isinstance(texts, str):
-                            return np.random.randn(self.embedding_dim).astype(np.float32)
-                        return np.random.randn(len(texts), self.embedding_dim).astype(np.float32)
-                    
-                    # Create a simple object with an encode method
-                    class DummyModel:
-                        def encode(self, texts, normalize_embeddings=True):
-                            return dummy_encode(texts, normalize_embeddings)
-                    
-                    self.model = DummyModel()
+        # Create a deterministic hash from the text
+        hash_base = hashlib.md5(text.encode()).digest()
         
-    def embed_text(self, text: str) -> np.ndarray:
-        """
-        Generate embedding for a single text.
+        # Convert hash to a list of floats to form base embedding vector
+        float_array = np.frombuffer(hash_base, dtype=np.uint8).astype(np.float32)
         
-        Args:
-            text: The text to embed.
+        # Expand to required dimension with some basic text features
+        embedding = np.zeros(self.embedding_dim, dtype=np.float32)
+        
+        # Fill in the embedding vector with hash values (repeated as needed)
+        for i in range(self.embedding_dim):
+            embedding[i] = float_array[i % len(float_array)] / 255.0  # Normalize to [0,1]
+        
+        # Add some simple text statistics to make embeddings more meaningful
+        if total_words > 0:
+            # First few dimensions hold some text statistics
+            embedding[0] = len(text) / 1000.0  # Document length (normalized)
+            embedding[1] = total_words / 200.0  # Word count (normalized)
+            embedding[2] = len(set(words)) / total_words if total_words else 0  # Lexical diversity
             
-        Returns:
-            Numpy array of embeddings.
-        """
-        return self.model.encode(text, normalize_embeddings=True)
+            # Create simple n-gram features
+            for i, word in enumerate(words[:20]):  # Use first 20 words only
+                word_hash = int(hashlib.md5(word.encode()).hexdigest(), 16)
+                position = 10 + (word_hash % (self.embedding_dim - 10))  # Start after the statistical features
+                embedding[position] += 1.0 / (i + 1)  # Weight by position
+        
+        # Normalize to unit length
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding /= norm
+            
+        return embedding
+    
+    def embed_text(self, text: str) -> np.ndarray:
+        """Generate embedding for a single text."""
+        return self._generate_embedding(text)
+    
+    def embed_texts(self, texts: List[str]) -> np.ndarray:
+        """Generate embeddings for multiple texts."""
+        embeddings = np.zeros((len(texts), self.embedding_dim), dtype=np.float32)
+        for i, text in enumerate(texts):
+            embeddings[i] = self._generate_embedding(text)
+        return embeddings
+    
+    def embed_query(self, query: str) -> np.ndarray:
+        """Generate embedding for a query."""
+        return self._generate_embedding(query)
+    
+    def embed_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Generate embeddings for a list of documents."""
+        return [{
+            **doc,
+            "embedding": self._generate_embedding(doc["text"] if "text" in doc else str(doc))
+        } for doc in documents]
     
     def embed_texts(self, texts: List[str]) -> np.ndarray:
         """

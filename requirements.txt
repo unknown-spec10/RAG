@@ -6,10 +6,9 @@ pydantic>=2.4.0
 # PDF parsing
 pdfplumber>=0.10.0
 
-# Embeddings and vector database
-sentence-transformers>=2.2.2
-huggingface-hub>=0.17.0
+# Vector database
 faiss-cpu>=1.7.4
+numpy>=1.24.0
 
 # LLM and orchestration
 langchain>=0.1.0
