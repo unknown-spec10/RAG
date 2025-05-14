@@ -39,6 +39,20 @@ class GeminiEmbeddingModel:
 class EmbeddingModel:
     """Embedding model using hash-based approach."""
     
+    def encode(self, texts, normalize_embeddings=True, batch_size=None):
+        """Batch encode texts using hash-based embedding (for compatibility)."""
+        if isinstance(texts, str):
+            texts = [texts]
+        embeddings = []
+        for text in texts:
+            emb = self._generate_hash_embedding(text)
+            if normalize_embeddings:
+                norm = np.linalg.norm(emb)
+                if norm > 0:
+                    emb = emb / norm
+            embeddings.append(emb)
+        return np.array(embeddings)
+    
     def __init__(
         self, 
         model_name: str = "lightweight-hash",

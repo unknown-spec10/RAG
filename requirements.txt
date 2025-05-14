@@ -6,6 +6,12 @@ pydantic>=2.4.0
 # PDF parsing
 pdfplumber>=0.10.0
 
+# Web scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+selenium>=4.19.0
+webdriver-manager>=4.0.1
+
 # Vector database
 faiss-cpu>=1.7.4
 numpy>=1.24.0

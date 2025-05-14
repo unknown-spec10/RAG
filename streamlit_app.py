@@ -29,6 +29,7 @@ import src.rag.retriever as retriever
 import src.rag.context_protocol as context_protocol
 import src.agents.rag_agent as rag_agent
 import src.utils.cache as cache_utils
+from src.rag.agentic_workflow import ingest_document, retrieve_context
 
 # Define configuration directly
 APP_CONFIG = {
@@ -185,59 +186,48 @@ def render_chat():
         process_query(prompt)
 
 def process_query(query: str):
-    """Process a user query."""
+    """Process a user query using agentic workflow."""
     if not st.session_state.initialized:
         st.error("Please upload and index some documents first.")
         return
-        
-    # Add user message
+    user_id = st.text_input("Enter your User ID for personalized answers:", key="query_user_id")
+    if not user_id:
+        st.warning("Please enter your User ID to query your policy and general info.")
+        return
     st.session_state.messages.append({"role": "user", "content": query})
     with st.chat_message("user"):
         st.markdown(query)
-    
-    # Generate response
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         message_placeholder.markdown("Thinking...")
-        
         try:
             with st.spinner("Searching knowledge base..."):
-                result = st.session_state.agent.query(query)
-            
+                context_chunks = retrieve_context(query, user_id)
+                # Compose context for LLM
+                context_text = "\n\n".join([chunk["text"] for chunk in context_chunks if "text" in chunk])
+                # Call LLM (simulate via st.session_state.agent for now)
+                result = st.session_state.agent.query(query, context=context_text)
             response = result["response"]
             sources = result.get("sources", [])
             followup_questions = result.get("followup_questions", [])
-            
             message_placeholder.markdown(response)
-            
             if sources:
                 with st.expander("View Sources"):
                     for i, source in enumerate(sources):
                         st.markdown(f"**Source {i+1}:**")
-                        # Safely handle content which might be a string or dict
-                        if isinstance(source, dict) and "content" in source:
-                            content = source["content"]
-                            if isinstance(content, str):
-                                st.markdown(content)
-                            else:
-                                st.markdown(str(content))
-                        else:
-                            st.markdown(str(source))
-                            
-                        # Safely handle metadata
+                        content = source["content"] if isinstance(source, dict) and "content" in source else str(source)
+                        st.markdown(content)
                         if isinstance(source, dict) and "metadata" in source and source["metadata"]:
                             try:
                                 st.markdown(f"*Metadata: {json.dumps(source['metadata'], indent=2)}*")
                             except:
                                 st.markdown(f"*Metadata: {str(source['metadata'])}*")
-            
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": response,
                 "sources": sources
             })
             st.session_state.followup_questions = followup_questions
-            
         except Exception as e:
             error_msg = f"Error generating response: {str(e)}"
             message_placeholder.markdown(error_msg)
@@ -246,166 +236,69 @@ def process_query(query: str):
                 "content": error_msg
             })
 
+
 def render_upload():
     """Render the upload interface."""
     st.header("Upload Documents")
-    
-    # File upload
+
+    upload_mode = st.radio("Select upload type:", ["static", "user"], format_func=lambda x: "General Insurance (Static)" if x=="static" else "User Policy (User-specific)")
+    user_id = None
+    if upload_mode == "user":
+        user_id = st.text_input("Enter User ID for this policy upload:")
+
     uploaded_files = st.file_uploader(
         "Upload PDF documents",
         type=["pdf"],
         accept_multiple_files=True
     )
     
-    if uploaded_files:
+    if uploaded_files and (upload_mode == "static" or (upload_mode == "user" and user_id)):
         with st.spinner("Processing documents..."):
-            index_documents(uploaded_files)
+            index_documents(uploaded_files, upload_mode, user_id)
             st.success(f"Successfully processed {len(uploaded_files)} documents")
+    elif uploaded_files and upload_mode == "user" and not user_id:
+        st.warning("Please enter a User ID for user-specific upload.")
 
-def index_documents(uploaded_files):
-    """Process and index uploaded PDF documents."""
+
+def index_documents(uploaded_files, mode, user_id=None):
+    """Process and index uploaded PDF documents using agentic workflow."""
     try:
-        documents = []
         st.info("Processing uploaded documents...")
-        
         for file in uploaded_files:
-            # Create a unique ID based on filename and timestamp
-            file_id = uuid.uuid4().hex
-            st.info(f"Processing file: {file.name}")
-            
-            # Create a temporary file to save the uploaded file
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             temp_file.write(file.read())
             temp_file.close()
-            
             try:
-                # Parse the PDF file
-                text = st.session_state.pdf_parser.parse_file(temp_file.name)
-                st.info(f"Extracted text from {file.name}")
-                # Since parse_file returns a single string, we'll treat it as one page
-                text_by_page = [text]
-                
-                # Process each page
-                for i, text in enumerate(text_by_page):
-                    if not text.strip():  # Skip empty pages
-                        continue
-                        
-                    # Create document ID using filename, page number and UUID
-                    doc_id = f"{file.name.split('.')[0]}_page_{i}_{file_id}"
-                    
-                    # Skip if we've already indexed this document
-                    if doc_id in st.session_state.indexed_files:
-                        continue
-                    
-                    # Split text into chunks
-                    chunks_data = st.session_state.text_chunker.chunk_text(text)
-                    st.info(f"Created {len(chunks_data)} chunks from page {i}")
-                    
-                    # Extract just the text strings from the chunk dictionaries
-                    chunks = [chunk["text"] if isinstance(chunk, dict) and "text" in chunk else str(chunk) for chunk in chunks_data]
-                    
-                    # Create embeddings using hash-based method (simplest and most reliable)
-                    embeddings = []
-                    # Determine the required embedding dimension
-                    embedding_dim = 384  # Hardcoded to match vector DB expectation
-                    
-                    for chunk_idx, chunk in enumerate(chunks):
-                        try:
-                            # Generate embedding directly from text - always 384 dimensions
-                            embedding = st.session_state.embedding_model._generate_hash_embedding(chunk)
-                            
-                            # Double-check dimension
-                            if embedding.shape != (embedding_dim,):
-                                st.warning(f"Fixing embedding dimension for chunk {chunk_idx}: got {embedding.shape}, expected ({embedding_dim},)")
-                                # Resize or create new embedding with correct dimension
-                                fixed_embedding = np.zeros(embedding_dim, dtype=np.float32)
-                                # Copy values from original embedding up to min length
-                                min_dim = min(len(embedding), embedding_dim)
-                                fixed_embedding[:min_dim] = embedding[:min_dim]
-                                # Normalize
-                                norm = np.linalg.norm(fixed_embedding)
-                                if norm > 0:
-                                    fixed_embedding /= norm
-                                embedding = fixed_embedding
-                                
-                            embeddings.append(embedding)
-                        except Exception as emb_err:
-                            st.error(f"Error generating embedding for chunk {chunk_idx}: {str(emb_err)}")
-                            # Create a simple zero embedding as fallback with correct dimension
-                            embeddings.append(np.zeros(embedding_dim, dtype=np.float32))
-                    
-                    # Convert to numpy array for vector DB
-                    embeddings = np.array(embeddings)
-                    st.info(f"Created {len(embeddings)} embeddings for page {i}")
-                    
-                    # Create documents for vector DB
-                    for j, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-                        chunk_id = f"{doc_id}_chunk_{j}"
-                        documents.append({
-                            "id": chunk_id,
-                            "text": chunk,
-                            "embedding": embedding,
-                            "metadata": {
-                                "filename": file.name,
-                                "page": i,
-                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                        })
-                        st.session_state.indexed_files.add(doc_id)
-            
+                chunk_count = ingest_document(mode, temp_file.name, user_id)
+                st.success(f"Indexed {chunk_count} chunks from {file.name} in {mode} KB.")
+            except Exception as e:
+                st.error(f"Error ingesting {file.name}: {str(e)}")
             finally:
-                # Clean up temporary file
                 os.unlink(temp_file.name)
-        
-        # Add documents to vector DB with additional error handling
-        try:
-            if not documents:
-                st.warning("No documents were processed. Please try uploading a different PDF.")
-                return
-                
-            st.info(f"Adding {len(documents)} document chunks to vector database")
-            
-            # Check that embeddings have the right shape and fix if needed
-            embedding_dim = 384  # Hardcoded to ensure consistency
-            dimension_fixes = 0
-            
-            for doc in documents:
-                if doc["embedding"].shape != (embedding_dim,):
-                    # Reshape or fix the embedding
-                    dimension_fixes += 1
-                    fixed_embedding = np.zeros(embedding_dim, dtype=np.float32)
-                    # Copy values from original embedding up to min length
-                    min_dim = min(len(doc["embedding"]), embedding_dim)
-                    fixed_embedding[:min_dim] = doc["embedding"][:min_dim]
-                    # Normalize
-                    norm = np.linalg.norm(fixed_embedding)
-                    if norm > 0:
-                        fixed_embedding /= norm
-                    doc["embedding"] = fixed_embedding
-            
-            if dimension_fixes > 0:
-                st.warning(f"Fixed dimensions for {dimension_fixes} embeddings to match vector DB requirements ({embedding_dim} dimensions)")
-            
-            # Add to vector DB
-            st.session_state.vector_db.add_documents(
-                documents,
-                embedding_key="embedding",
-                text_key="text",
-                metadata_key="metadata",
-                ids=[doc["id"] for doc in documents]
-            )
-            
-            st.success(f"Successfully indexed {len(documents)} chunks from {len(uploaded_files)} documents!")
-            
-        except Exception as db_err:
-            st.error(f"Error adding documents to vector database: {str(db_err)}")
-            import traceback
-            st.error(f"Traceback: {traceback.format_exc()}")
-        
     except Exception as e:
         st.error(f"Error processing documents: {str(e)}")
-        import traceback
-        st.error(f"Traceback: {traceback.format_exc()}")
+
+
+def render_scraping_sidebar():
+    from src.rag.agentic_workflow import INSURER_URLS, scrape_and_ingest_pdfs_from_page
+    st.sidebar.header("📄 Scrape Insurer PDFs")
+    insurer = st.sidebar.selectbox("Select Insurance Company", list(INSURER_URLS.keys()))
+    doc_types = st.sidebar.multiselect(
+        "Select Document Types",
+        ["Brochure", "Policy Wordings", "Benefits Guide"],
+        default=["Brochure"]
+    )
+    if st.sidebar.button("Scrape & Ingest PDFs"):
+        with st.sidebar:
+            for doc_type in doc_types:
+                url = INSURER_URLS[insurer].get(doc_type)
+                if url:
+                    st.info(f"Scraping {doc_type} from {insurer}...")
+                    count = scrape_and_ingest_pdfs_from_page(url)
+                    st.success(f"Ingested {count} PDFs from {doc_type} ({insurer})")
+                else:
+                    st.warning(f"No URL for {doc_type} in {insurer}")
+
 
 def main():
     """Main application entry point."""
@@ -415,6 +308,7 @@ def main():
         layout="wide"
     )
     
+    render_scraping_sidebar()
     st.title("Agentic RAG")
     st.markdown("<p style='font-size:0.9em;color:gray;'>Created by Deep Podder</p>", unsafe_allow_html=True)
     
