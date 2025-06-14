@@ -124,9 +124,10 @@ class EmbeddingModel:
         """Generate a deterministic hash-based embedding with the correct dimension."""
         import hashlib
         import re
+        import numpy as np
         
         # Ensure we generate exactly the dimension expected by the vector DB
-        target_dim = 384  # Hardcoded to ensure consistency with vector DB
+        target_dim = self.embedding_dim  # Use configured dimension
         
         # Normalize text: lowercase, remove punctuation, extra spaces
         text = text.lower()
@@ -137,22 +138,16 @@ class EmbeddingModel:
         words = text.split()
         total_words = len(words)
         
-        # Create a deterministic hash from the text
-        hash_base = hashlib.md5(text.encode()).digest()
+        # Use SHA256 to get a strong hash, use as PRNG seed
+        hash_digest = hashlib.sha256(text.encode()).digest()
+        seed = int.from_bytes(hash_digest[:8], 'big')
+        rng = np.random.default_rng(seed)
         
-        # Convert hash to a list of floats to form base embedding vector
-        float_array = np.frombuffer(hash_base, dtype=np.uint8).astype(np.float32)
-        
-        # Always create exactly 384-dimensional vectors regardless of self.embedding_dim
-        embedding = np.zeros(target_dim, dtype=np.float32)
-        
-        # Fill in the embedding vector with hash values (repeated as needed)
-        for i in range(target_dim):
-            embedding[i] = float_array[i % len(float_array)] / 255.0  # Normalize to [0,1]
+        # Generate embedding with PRNG
+        embedding = rng.normal(loc=0.0, scale=1.0, size=target_dim).astype(np.float32)
         
         # Add some simple text statistics to make embeddings more meaningful
         if total_words > 0:
-            # First few dimensions hold some text statistics
             embedding[0] = len(text) / 1000.0  # Document length (normalized)
             embedding[1] = total_words / 200.0  # Word count (normalized)
             embedding[2] = len(set(words)) / total_words if total_words else 0  # Lexical diversity
@@ -161,7 +156,7 @@ class EmbeddingModel:
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding /= norm
-            
+        
         return embedding
     
     def embed_text(self, text: str) -> np.ndarray:
@@ -172,7 +167,10 @@ class EmbeddingModel:
         """Generate embeddings for multiple texts."""
         embeddings = np.zeros((len(texts), self.embedding_dim), dtype=np.float32)
         for i, text in enumerate(texts):
-            embeddings[i] = self._generate_embedding(text)
+            emb = self._generate_embedding(text)
+            if emb.shape[0] != self.embedding_dim:
+                raise ValueError(f"Embedding dimension mismatch: got {emb.shape[0]}, expected {self.embedding_dim}")
+            embeddings[i] = emb
         return embeddings
     
     def embed_query(self, query: str) -> np.ndarray:

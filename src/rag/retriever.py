@@ -1,244 +1,69 @@
-"""Retriever module for fetching relevant documents based on a query."""
-from typing import List, Dict, Any, Optional
+"""RAG retriever implementation using TF-IDF based similarity."""
+from typing import List, Dict, Any
 import numpy as np
-import math
-import re
-import hashlib
-from collections import Counter
-from src.vector_db.faiss_db import FAISSVectorDB
-from src.embeddings.embedding_model import EmbeddingModel
-
+from .embeddings import TFIDFEmbeddings
 
 class RAGRetriever:
-    """Class for retrieving relevant documents for a query."""
+    """Retriever for RAG system using TF-IDF based similarity."""
     
-    def __init__(
-        self, 
-        vector_db: FAISSVectorDB,
-        embedding_model: EmbeddingModel,
-        top_k: int = 5
-    ):
-        """
-        Initialize the retriever.
+    def __init__(self, embeddings: TFIDFEmbeddings = None):
+        """Initialize the retriever."""
+        self.embeddings = embeddings or TFIDFEmbeddings()
+        self.documents = []
+        self.document_embeddings = []
+    
+    def add_documents(self, documents: List[Dict[str, Any]]):
+        """Add documents to the retriever."""
+        self.documents.extend(documents)
+        # Generate embeddings for new documents
+        new_embeddings = self.embeddings.embed_documents(documents)
+        self.document_embeddings.extend(new_embeddings)
+    
+    def _compute_similarity(self, query_embedding: np.ndarray, doc_embedding: np.ndarray) -> float:
+        """Compute cosine similarity between query and document embeddings."""
+        # Normalize the vectors
+        query_norm = np.linalg.norm(query_embedding)
+        doc_norm = np.linalg.norm(doc_embedding)
         
-        Args:
-            vector_db: Vector database instance.
-            embedding_model: Embedding model instance.
-            top_k: Number of documents to retrieve.
-        """
-        self.vector_db = vector_db
-        self.embedding_model = embedding_model
-        self.top_k = top_k
+        if query_norm == 0 or doc_norm == 0:
+            return 0.0
+            
+        # Compute cosine similarity
+        return np.dot(query_embedding, doc_embedding) / (query_norm * doc_norm)
     
-    def retrieve(
-        self, 
-        query: str,
-        filter_criteria: Optional[Dict[str, Any]] = None,
-        rerank: bool = False
-    ) -> List[Dict[str, Any]]:
+    def retrieve(self, query: str, documents: List[Dict[str, Any]] = None, top_k: int = 3) -> List[Dict[str, Any]]:
         """
         Retrieve relevant documents for a query.
         
         Args:
-            query: Query string.
-            filter_criteria: Optional filter criteria for metadata.
-            rerank: Whether to rerank results.
-            
-        Returns:
-            List of retrieved documents.
-        """
-        # Try simple keyword search first for non-empty query
-        if query.strip():
-            try:
-                all_docs = self.vector_db.get_all_documents()
-                if all_docs and "documents" in all_docs and all_docs["documents"]:
-                    documents = self._simple_keyword_search(query, all_docs, self.top_k)
-                    if documents:
-                        print(f"Found {len(documents)} documents with keyword search")
-                        return documents
-            except Exception as e:
-                print(f"Keyword search error: {str(e)}. Falling back to vector search.")
-        
-        # Vector search as fallback
-        try:
-            # Check if vector db exists and has documents
-            if self.vector_db is None:
-                print("Warning: Vector database is not initialized")
-                return []
-                
-            doc_count = self.vector_db.count()
-            if doc_count == 0:
-                print("Warning: No documents found in the vector database")
-                return []
-                
-            # Create a simple hash-based embedding for the query
-            # Process the query text
-            text = query.lower()
-            text = re.sub(r'[^\w\s]', '', text)
-            text = re.sub(r'\s+', ' ', text).strip()
-            
-            # Generate a deterministic hash
-            hash_result = hashlib.md5(text.encode()).digest()
-            
-            # Create a fixed-dimensional embedding
-            query_embedding = np.zeros(384, dtype=np.float32)
-            hash_floats = np.frombuffer(hash_result, dtype=np.uint8).astype(np.float32)
-            
-            # Fill the embedding vector
-            for i in range(len(query_embedding)):
-                query_embedding[i] = hash_floats[i % len(hash_floats)] / 255.0
-            
-            # Shape it correctly for FAISS
-            query_embedding = query_embedding.reshape(1, -1)
-            
-            # Try vector search
-            results = self.vector_db.query(
-                query_embedding=query_embedding,
-                n_results=self.top_k
-            )
-            
-            # Process results
-            documents = []
-            if results and "documents" in results and results["documents"]:
-                for i, (doc_text, metadata, distance) in enumerate(
-                    zip(results.get("documents", []), results.get("metadatas", []), results.get("distances", []))
-                ):
-                    documents.append({
-                        "text": doc_text,
-                        "metadata": metadata,
-                        "id": "unknown",
-                        "score": distance
-                    })
-                
-                if documents:
-                    print(f"Found {len(documents)} documents with vector search")
-                    return documents
-            
-            # If we got here, both search methods failed
-            print("Warning: No documents found with any search method")
-            return []
-                
-        except Exception as e:
-            import traceback
-            print(f"Error in vector search: {str(e)}")
-            print(traceback.format_exc())
-            return []
-    
-    def _simple_keyword_search(self, query: str, all_docs: Dict[str, Any], top_k: int = 5) -> List[Dict[str, Any]]:
-        """Simple and reliable keyword search on documents.
-        
-        Args:
-            query: Query text
-            all_docs: Dictionary with document data from vector db
+            query: Query string
+            documents: Optional list of documents to search in. If None, uses stored documents.
             top_k: Number of documents to retrieve
             
         Returns:
-            List of relevant documents
+            List of relevant documents with their similarity scores
         """
-        # Extract document data
-        doc_texts = all_docs.get("documents", [])
-        doc_ids = all_docs.get("ids", [])
-        metadatas = all_docs.get("metadatas", [])
+        # Use provided documents or stored documents
+        docs_to_search = documents if documents is not None else self.documents
+        embeddings_to_search = self.embeddings.embed_documents(docs_to_search)
         
-        # Ensure we have equal length arrays with fallbacks
-        n_docs = len(doc_texts)
-        if len(doc_ids) < n_docs:
-            doc_ids = doc_ids + [f"doc_{i}" for i in range(len(doc_ids), n_docs)]
-        if len(metadatas) < n_docs:
-            metadatas = metadatas + [{} for _ in range(len(metadatas), n_docs)]
-            
-        if not doc_texts:
-            return []
-            
-        # Simple keyword matching
-        query_terms = query.lower().split()
-        results = []
+        # Generate query embedding
+        query_embedding = self.embeddings.embed_query(query)
         
-        for i, doc_text in enumerate(doc_texts):
-            if not doc_text:
-                continue
-                
-            # Count matches
-            doc_lower = doc_text.lower()
-            matches = 0
-            
-            for term in query_terms:
-                if term in doc_lower:
-                    matches += 1
-            
-            # Only include if there's at least one match
-            if matches > 0:
-                results.append({
-                    "id": doc_ids[i] if i < len(doc_ids) else f"doc_{i}",
-                    "text": doc_text,
-                    "metadata": metadatas[i] if i < len(metadatas) else {},
-                    "score": matches
-                })
-                
-        # Sort by number of matches (descending)
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:top_k]
-    
-    def _rerank_documents(
-        self, 
-        query: str, 
-        documents: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Rerank documents based on more sophisticated similarity to query.
-        This is a simple implementation - could be replaced with more 
-        sophisticated reranking in the future.
+        # Compute similarities
+        similarities = [
+            self._compute_similarity(query_embedding, doc_embedding)
+            for doc_embedding in embeddings_to_search
+        ]
         
-        Args:
-            query: Query string.
-            documents: List of documents to rerank.
-            
-        Returns:
-            Reranked list of documents.
-        """
-        # Simple reranking - could be extended with more sophisticated methods
-        query_embedding = self.embedding_model.embed_text(query)
+        # Get top-k documents
+        top_indices = np.argsort(similarities)[-top_k:][::-1]
         
-        for doc in documents:
-            # Get document text
-            text = doc.get("text", "")
-            
-            # Calculate similarity score
-            doc_embedding = self.embedding_model.embed_text(text)
-            similarity = self.embedding_model.similarity(query_embedding, doc_embedding)
-            
-            # Update similarity score
-            doc["similarity"] = similarity
-        
-        # Sort by similarity (descending)
-        documents.sort(key=lambda x: x.get("similarity", 0), reverse=True)
-        
-        return documents
-    
-    def hybrid_retrieve(
-        self, 
-        query: str,
-        filter_criteria: Optional[Dict[str, Any]] = None,
-        keyword_weight: float = 0.3
-    ) -> List[Dict[str, Any]]:
-        """
-        Hybrid retrieval combining vector similarity and keyword matching.
-        
-        Args:
-            query: Query string.
-            filter_criteria: Optional filter criteria for metadata.
-            keyword_weight: Weight for keyword matching (0-1).
-            
-        Returns:
-            List of retrieved documents.
-        """
-        # Vector retrieval
-        vector_results = self.retrieve(
-            query=query,
-            filter_criteria=filter_criteria,
-            rerank=False
-        )
-        
-        # Combine results (in a real implementation, you would add keyword search here)
-        # This is a placeholder for a more sophisticated hybrid retrieval
-        return vector_results
+        # Return documents with their similarity scores
+        return [
+            {
+                **docs_to_search[i],
+                "similarity_score": float(similarities[i])
+            }
+            for i in top_indices
+        ]

@@ -16,6 +16,7 @@ lib64/
 parts/
 sdist/
 var/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -30,7 +31,6 @@ ENV/
 
 # Data directories (don't commit user data)
 data/pdfs/
-data/chroma_db/
 data/cache/
 
 # IDE
@@ -42,3 +42,7 @@ data/cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project specific
+vector_store/
+*.pdf

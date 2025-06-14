@@ -237,6 +237,5 @@ MIT
 
 - LangChain and LangGraph for the RAG and orchestration frameworks
 - Sentence Transformers for embedding models
-- ChromaDB for vector storage
 - Ollama for local LLM integration
 - Streamlit for the user interface

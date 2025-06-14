@@ -1,3 +1,10 @@
+[theme]
+primaryColor = "#FF4B4B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
 [server]
 # Disable the watchdog that monitors file changes
 fileWatcherType = "none"
@@ -6,6 +13,15 @@ fileWatcherType = "none"
 # enableXsrfProtection = false
 # enableStaticServing = true
 
+maxUploadSize = 200
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
 [runner]
 # Sets the number of seconds to wait for the script to stop when rerunning
 fastReruns = true
+
+magicEnabled = true
