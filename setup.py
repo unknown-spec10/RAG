@@ -21,4 +21,5 @@ setup(
         "langchain-groq>=0.1.0",
     ],
     python_requires=">=3.11",
+    zip_safe=False,  # Ensure packages are installed as directories
 ) 

@@ -9,7 +9,7 @@ src_dir = os.path.join(current_dir, 'src')
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-# Import from src/rag directory
+# Import from src directory
 from rag.pdf_processor.pdf_parser import PDFParser
 from rag.pdf_processor.text_chunker import TextChunker
 from rag.agents.rag_agent import RAGAgent, MockLLM
