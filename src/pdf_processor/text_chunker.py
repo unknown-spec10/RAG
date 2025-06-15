@@ -9,8 +9,8 @@ class TextChunker:
     
     def __init__(
         self, 
-        chunk_size: int = 1000, 
-        chunk_overlap: int = 200,
+        chunk_size: int = 2000,  # Increased chunk size
+        chunk_overlap: int = 400,  # Increased overlap
         chunking_strategy: str = "recursive"
     ):
         """
@@ -31,6 +31,7 @@ class TextChunker:
                 chunk_overlap=chunk_overlap,
                 length_function=len,
                 is_separator_regex=False,
+                separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]  # More granular separators
             )
         elif chunking_strategy == "markdown":
             # For markdown documents with headers
@@ -45,7 +46,8 @@ class TextChunker:
             )
             self.text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap
+                chunk_overlap=chunk_overlap,
+                separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
             )
         else:
             raise ValueError(f"Unsupported chunking strategy: {chunking_strategy}")
@@ -72,7 +74,8 @@ class TextChunker:
                     chunk_metadata = {
                         **(metadata or {}),
                         **md_doc.metadata,
-                        "chunk_id": i
+                        "chunk_id": i,
+                        "total_chunks": len(sub_chunks)
                     }
                     chunks.append({
                         "text": chunk.page_content,
@@ -88,6 +91,7 @@ class TextChunker:
                     "metadata": {
                         **(metadata or {}),
                         "chunk_id": i,
+                        "total_chunks": len(sub_texts),
                         "chunk_size": len(sub_text),
                     }
                 }

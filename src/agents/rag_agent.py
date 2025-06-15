@@ -7,7 +7,7 @@ from langchain_groq import ChatGroq
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from src.rag.retriever import RAGRetriever
+from src.rag.chroma_retriever import ChromaRetriever
 from src.rag.context_protocol import ContextProtocolManager, ContextSet
 
 class MockLLM(BaseChatModel):
@@ -51,7 +51,7 @@ class RAGAgent:
     
     def __init__(
         self,
-        retriever: RAGRetriever,
+        retriever: ChromaRetriever,
         model_name: str = "llama3-70b-8192",
         temperature: float = 0.1,
         context_window: int = 8192,
@@ -63,7 +63,7 @@ class RAGAgent:
         Initialize the RAG agent.
         
         Args:
-            retriever: RAG retriever instance.
+            retriever: ChromaDB retriever instance.
             model_name: Name of the LLM to use.
             temperature: Temperature for LLM generation.
             context_window: Context window size for the LLM.
@@ -124,10 +124,9 @@ class RAGAgent:
     def _retrieve_documents(self, state: AgentState) -> AgentState:
         """Retrieve relevant documents for the query."""
         query = state["query"]
-        documents = state["documents"]
         
         # Retrieve relevant documents using the retriever
-        retrieved_docs = self.retriever.retrieve(query, documents)
+        retrieved_docs = self.retriever.retrieve(query)
         
         # Update state with retrieved documents
         state["documents"] = retrieved_docs
@@ -198,56 +197,70 @@ Current Response:
 
 Generate 2-3 follow-up questions that can be answered using ONLY the above context:"""
         
+        # Generate follow-up questions
         followup_response = self.llm.invoke(prompt)
+        followup_text = followup_response.content if hasattr(followup_response, 'content') else str(followup_response)
         
         # Parse follow-up questions
         questions = []
-        if hasattr(followup_response, 'content'):
-            questions = [q.strip() for q in followup_response.content.split('\n') if q.strip()]
-        else:
-            questions = ["The answer is not available in your policy or documents."]
+        for line in followup_text.split('\n'):
+            line = line.strip()
+            if line and line[0].isdigit() and '. ' in line:
+                question = line.split('. ', 1)[1].strip()
+                questions.append(question)
         
         # Update state with follow-up questions
         state["followup_questions"] = questions
         return state
     
     def _format_rag_prompt(self, query: str, documents: List[Dict[str, Any]]) -> str:
-        """Format the prompt for the LLM with strict context-based response rules."""
-        system_message = """You are a context-aware assistant. Follow these rules strictly:
-1. ONLY answer using the provided context.
-2. If the answer is not present in the context, respond with: "The answer is not available in your policy or documents."
-3. DO NOT use any external knowledge.
-4. DO NOT make assumptions or fabricate information.
-5. DO NOT try to be helpful by guessing or providing general information.
-6. If the context is insufficient, simply state that the information is not available.
-7. For each piece of information you use, reference which source it came from using Source: "filename" (Page X).
-8. After your response, list ONLY the specific chunks you used to answer the question, in this format:
-   Source: "filename" (Page X)
-   [Relevant chunk text]"""
+        """Format the prompt for the RAG system."""
+        # Sort documents by similarity score
+        sorted_docs = sorted(documents, key=lambda x: x.get('similarity_score', 0), reverse=True)
+        
+        # Format context with clear source attribution
+        context_parts = []
+        for doc in sorted_docs:
+            source = doc.get('metadata', {}).get('source', 'Unknown')
+            page = doc.get('metadata', {}).get('page', 'Unknown')
+            text = doc.get('text', '')
+            context_parts.append(f"Source: {source} (Page {page})\n{text}\n")
+        
+        context = "\n".join(context_parts)
+        
+        return f"""You are a helpful AI assistant. Use the following context to answer the question.
+If you cannot answer the question using only the provided context, say so.
+Always cite your sources using the format: Source: "source_name (Page X)" followed by the relevant text.
 
-        prompt = f"{system_message}\n\nContext:\n"
-        for i, doc in enumerate(documents, 1):
-            source_name = doc.get('metadata', {}).get('source', 'Unknown')
-            page_num = doc.get('metadata', {}).get('page', 'Unknown')
-            prompt += f"[Source {i}: {source_name} (Page {page_num})]\n{doc.get('text', '')}\n\n"
-        prompt += f"\nQuestion: {query}\n\nAnswer (based ONLY on the above context, include source references):"
-        return prompt
-    
-    def query(self, query: str, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
+Rules for answering:
+1. Provide a complete and comprehensive answer using ALL relevant information from the context
+2. If the answer spans multiple sources, combine them into a coherent response
+3. Include ALL relevant steps or details, not just the first ones you find
+4. If the information seems incomplete, mention that there might be more details available
+5. Always cite your sources for each piece of information
+
+Context:
+{context}
+
+Question: {query}
+
+Provide a comprehensive answer based ONLY on the provided context. Include relevant source citations."""
+
+    def query(self, query: str) -> Dict[str, Any]:
         """
-        Process a query using the RAG workflow.
+        Process a query using the RAG system.
         
         Args:
-            query: Query string.
-            documents: List of documents to search in.
+            query: The query to process
             
         Returns:
-            Dictionary containing the response, follow-up questions, and sources.
+            Dictionary containing the response, sources, and follow-up questions
         """
         # Initialize the state
         state = {
             "query": query,
-            "documents": documents,
+            "context": None,
+            "documents": [],
             "response": None,
             "followup_questions": None,
             "messages": [],
@@ -255,11 +268,21 @@ Generate 2-3 follow-up questions that can be answered using ONLY the above conte
             "sources": None
         }
         
-        # Run the workflow
-        result = self.graph.invoke(state)
-        
-        return {
-            "response": result["response"],
-            "followup_questions": result["followup_questions"],
-            "sources": result["sources"]  # Include sources in the response
-        }
+        try:
+            # Run the workflow
+            final_state = self.graph.invoke(state)
+            
+            # Return the results
+            return {
+                "response": final_state["response"],
+                "sources": final_state["sources"],
+                "followup_questions": final_state["followup_questions"]
+            }
+            
+        except Exception as e:
+            logging.error(f"Error processing query: {str(e)}")
+            return {
+                "response": f"Error processing query: {str(e)}",
+                "sources": [],
+                "followup_questions": []
+            }

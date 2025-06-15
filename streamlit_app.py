@@ -4,8 +4,7 @@ import os
 from src.pdf_processor.pdf_parser import PDFParser
 from src.pdf_processor.text_chunker import TextChunker
 from src.agents.rag_agent import RAGAgent, MockLLM
-from src.rag.retriever import RAGRetriever
-from src.rag.embeddings import TFIDFEmbeddings
+from src.rag.chroma_retriever import ChromaRetriever
 import logging
 import tempfile
 from typing import Optional
@@ -49,9 +48,8 @@ def initialize_agent():
         if not api_key:
             return None
             
-        # Initialize embeddings and retriever
-        embeddings = TFIDFEmbeddings()
-        retriever = RAGRetriever(embeddings=embeddings)
+        # Initialize retriever with ChromaDB
+        retriever = ChromaRetriever()
         
         # Initialize agent
         agent = RAGAgent(
@@ -160,7 +158,7 @@ def main():
             if query:
                 try:
                     # Process the query
-                    result = agent.query(query, chunked_docs)
+                    result = agent.query(query)
                     
                     # Display response
                     display_response(result)
