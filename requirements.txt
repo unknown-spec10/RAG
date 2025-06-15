@@ -9,7 +9,7 @@ wheel>=0.42.0
 pdfplumber==0.10.0
 
 # LLM and orchestration
-langchain==0.1.0
+langchain==0.1.16
 langchain-community==0.0.13
 langgraph==0.0.20
 langchain-text-splitters==0.0.1
