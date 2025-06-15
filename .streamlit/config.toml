@@ -25,3 +25,7 @@ gatherUsageStats = false
 fastReruns = true
 
 magicEnabled = true
+
+[main]
+# Set the main file to streamlit_app.py
+mainFile = "streamlit_app.py"
