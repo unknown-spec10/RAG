@@ -1,10 +1,15 @@
 """Streamlit app for RAG system."""
 import streamlit as st
 import os
-from src.pdf_processor.pdf_parser import PDFParser
-from src.pdf_processor.text_chunker import TextChunker
-from src.agents.rag_agent import RAGAgent, MockLLM
-from src.rag.chroma_retriever import ChromaRetriever
+import sys
+
+# Add the project root to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from pdf_processor.pdf_parser import PDFParser
+from pdf_processor.text_chunker import TextChunker
+from agents.rag_agent import RAGAgent, MockLLM
+from rag.chroma_retriever import ChromaRetriever
 import logging
 import tempfile
 from typing import Optional

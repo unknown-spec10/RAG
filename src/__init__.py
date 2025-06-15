@@ -1,1 +1,1 @@
-"""Agentic RAG package."""
+"""RAG System package."""
