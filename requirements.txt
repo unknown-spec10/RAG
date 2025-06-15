@@ -1,7 +1,11 @@
+# Python version
+python>=3.11,<3.12
+
 # Core dependencies
 streamlit==1.30.0
 python-dotenv==1.0.0
 pydantic==2.10.3
+setuptools>=68.0.0
 
 # PDF parsing
 pdfplumber==0.10.0
