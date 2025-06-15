@@ -1,10 +1,9 @@
-from setuptools import setup, find_namespace_packages
+from setuptools import setup, find_packages
 
 setup(
     name="rag-system",
     version="0.1.0",
-    packages=find_namespace_packages(include=['src*']),
-    package_dir={'': '.'},
+    packages=find_packages(),
     install_requires=[
         "streamlit>=1.30.0",
         "pdfplumber>=0.10.0",
