@@ -22,4 +22,5 @@ setup(
     ],
     python_requires=">=3.11",
     zip_safe=False,  # Ensure packages are installed as directories
+    include_package_data=True,  # Include non-Python files
 ) 
