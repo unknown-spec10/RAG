@@ -5,18 +5,42 @@ from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 import os
 import logging
+import sqlite3
+import tempfile
+import shutil
 
 logger = logging.getLogger(__name__)
+
+def get_sqlite_version():
+    """Get the current SQLite version."""
+    return sqlite3.sqlite_version
+
+def is_sqlite_compatible():
+    """Check if SQLite version is compatible with ChromaDB."""
+    version = get_sqlite_version()
+    major, minor, _ = map(int, version.split('.'))
+    return (major > 3) or (major == 3 and minor >= 35)
 
 class ChromaRetriever:
     """Retriever for RAG system using ChromaDB."""
     
     def __init__(self, collection_name: str = "documents"):
         """Initialize the retriever with ChromaDB."""
-        # Initialize ChromaDB client
+        # Check SQLite version
+        if not is_sqlite_compatible():
+            logger.warning(f"SQLite version {get_sqlite_version()} is below ChromaDB's requirement (>=3.35)")
+            # Create a temporary directory for ChromaDB
+            self.temp_dir = tempfile.mkdtemp()
+            persist_dir = self.temp_dir
+        else:
+            persist_dir = "chroma_db"
+            self.temp_dir = None
+
+        # Initialize ChromaDB client with appropriate settings
         self.client = chromadb.Client(Settings(
-            persist_directory="chroma_db",
-            anonymized_telemetry=False
+            persist_directory=persist_dir,
+            anonymized_telemetry=False,
+            allow_reset=True
         ))
         
         # Create or get collection
@@ -27,6 +51,17 @@ class ChromaRetriever:
         
         # Initialize document counter
         self.doc_count = 0
+        
+        logger.info(f"Initialized ChromaDB with SQLite version {get_sqlite_version()}")
+    
+    def __del__(self):
+        """Cleanup temporary directory if it exists."""
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+                logger.info(f"Cleaned up temporary directory: {self.temp_dir}")
+            except Exception as e:
+                logger.error(f"Error cleaning up temporary directory: {str(e)}")
     
     def add_documents(self, documents: List[Dict[str, Any]]):
         """Add documents to the retriever."""
