@@ -1,241 +1,222 @@
-# Agentic RAG
 
-A Retrieval-Augmented Generation (RAG) application that allows you to chat with your documents using advanced LLMs via the Groq API.
+# Agentic RAG System
 
-## Features
+A sophisticated Retrieval-Augmented Generation (RAG) system that enables intelligent document Q&A using advanced language models. This system combines document processing, semantic search, and LLM capabilities to provide accurate, context-aware responses.
 
-- Upload PDF documents for processing
-- Chat with your documents using state-of-the-art language models
-- View sources for generated responses
-- Clean and intuitive user interface
+## 🚀 Features
 
-## Streamlit Cloud Deployment
+- **Document Processing**
+  - PDF parsing and text extraction
+  - Intelligent text chunking with overlap
+  - Metadata preservation (source, page numbers)
 
-1. Fork this repository to your GitHub account
-2. Create a new app on [Streamlit Cloud](https://streamlit.io/cloud)
-3. Connect to your forked repository
-4. Configure the app settings with the main file as `streamlit_app.py`
-5. Add your API keys as secrets in the Streamlit Cloud dashboard:
-   - Go to Advanced Settings > Secrets
-   - Add `GROQ_API_KEY = "your-groq-api-key-here"`
-   - Add `GOOGLE_API_KEY = "your-google-api-key-here"` (for Gemini embeddings, optional)
+- **Semantic Search**
+  - TF-IDF based document retrieval
+  - Context-aware document ranking
+  - Efficient document chunking
 
-## Local Development
+- **LLM Integration**
+  - Groq API integration for high-performance inference
+  - Context-aware response generation
+  - Source attribution and verification
 
-1. Clone this repository
-2. Create a virtual environment: `python -m venv venv`
-3. Activate the virtual environment:
-   - Windows: `venv\Scripts\activate`
-   - Linux/Mac: `source venv/bin/activate`
-4. Install dependencies: `pip install -r requirements.txt`
-5. Set up your API keys using one of these methods:
-   
-   **Option 1**: Create a `.env` file in the project root:
+- **User Interface**
+  - Streamlit-based interactive interface
+  - Document upload and processing
+  - Real-time Q&A with source citations
+  - Expandable source references
+
+## 🏗️ System Architecture
+
+### Core Components
+
+1. **PDF Processor**
+   - `PDFParser`: Extracts text from PDF documents
+   - `TextChunker`: Splits documents into semantic chunks
+   - Preserves document structure and metadata
+
+2. **RAG Components**
+   - `RAGRetriever`: Manages document retrieval
+   - `TFIDFEmbeddings`: Generates document embeddings
+   - `ContextProtocolManager`: Handles context management
+
+3. **Agent System**
+   - `RAGAgent`: Orchestrates the RAG workflow
+   - `MockLLM`: Fallback for testing and error cases
+   - LangGraph integration for workflow management
+
+4. **User Interface**
+   - Streamlit app for user interaction
+   - Document upload and management
+   - Interactive Q&A interface
+
+## 🔄 Workflow
+
+1. **Document Processing**
    ```
-   GROQ_API_KEY=your-groq-api-key-here
-   GOOGLE_API_KEY=your-google-api-key-here  # For Gemini embeddings (optional)
-   ```
-   
-   **Option 2**: Create a `.streamlit/secrets.toml` file:
-   ```toml
-   GROQ_API_KEY = "your-groq-api-key-here"
-   GOOGLE_API_KEY = "your-google-api-key-here"  # For Gemini embeddings (optional)
+   PDF Upload → Text Extraction → Chunking → Embedding Generation
    ```
 
-6. Run the application: `streamlit run streamlit_app.py`
+2. **Query Processing**
+   ```
+   User Query → Semantic Search → Context Retrieval → Response Generation
+   ```
 
-## Requirements
+3. **Response Generation**
+   ```
+   Context + Query → LLM Processing → Source Attribution → Response
+   ```
 
-- Python 3.9+
-- Groq API key (required)
-- Google API key for Gemini embeddings (optional, falls back to hash-based embeddings if not provided)
+## 🛠️ Technical Implementation
 
----
-
-Created and maintained by Deep Podder
-[GitHub](https://github.com/unknown-spec10) | [LinkedIn](http://www.linkedin.com/in/deeppodder2005)
-
-A powerful agentic RAG (Retrieval Augmented Generation) application that allows you to add PDF documents to your knowledge base and ask questions based on their content.
-
-## Features
-
-- **PDF Processing**: Upload and process PDF documents using PyMuPDF and pdfplumber
-- **Intelligent Chunking**: Break down documents into semantic chunks for better retrieval
-- **Advanced Embeddings**: Generate embeddings using sentence-transformers (all-MiniLM or BGE)
-- **Vector Database**: Store and retrieve document chunks efficiently using ChromaDB
-- **Agentic RAG**: Use LangGraph for orchestrating the RAG workflow
-- **Context Protocol**: Implement Model Context Protocol for standardized context handling
-- **Local LLM Integration**: Connect to Ollama for local LLM inference (llama3, mistral)
-- **Interactive UI**: User-friendly interface built with Streamlit
-
-## Project Structure
-
-```
-Agentic_Rag/
-├── app.py                  # Main entry point
-├── README.md               # This file
-├── requirements.txt        # Dependencies
-├── data/                   # Data directory
-│   ├── pdfs/               # Stored PDF files
-│   └── chroma_db/          # ChromaDB storage
-└── src/                    # Source code
-    ├── pdf_processor/      # PDF parsing and chunking
-    ├── embeddings/         # Embedding models
-    ├── vector_db/          # Vector database
-    ├── rag/                # RAG components
-    ├── agents/             # Agentic components
-    ├── frontend/           # UI components
-    └── utils/              # Utility functions
+### Document Processing
+```python
+# PDF parsing and chunking
+pdf_parser = PDFParser()
+text = pdf_parser.parse_file(file_path)
+chunker = TextChunker(chunk_size=1000, chunk_overlap=200)
+chunks = chunker.chunk_documents([{"text": text, "metadata": {"source": filename}}])
 ```
 
-## Installation
+### RAG Implementation
+```python
+# RAG agent initialization
+embeddings = TFIDFEmbeddings()
+retriever = RAGRetriever(embeddings=embeddings)
+agent = RAGAgent(retriever=retriever, api_key=api_key)
+```
 
-1. **Clone the repository**:
-   ```
-   git clone <repository-url>
-   cd Agentic_Rag
-   ```
+### Response Generation
+```python
+# Query processing
+result = agent.query(query, documents)
+response = result["response"]
+sources = result["sources"]
+```
 
-2. **Set up a virtual environment**:
-   ```
-   python -m venv venv
-   ```
+## 📦 Dependencies
 
-3. **Activate the virtual environment**:
-   - Windows:
-     ```
-     .\venv\Scripts\activate
-     ```
-   - macOS/Linux:
-     ```
-     source venv/bin/activate
-     ```
+- **Core Dependencies**
+  - `streamlit==1.30.0`: Web interface
+  - `langchain==0.1.0`: RAG framework
+  - `langchain-groq==0.1.0`: Groq integration
+  - `pdfplumber==0.10.0`: PDF processing
 
-4. **Install dependencies**:
-   ```
+- **Vector Store & Embeddings**
+  - `faiss-cpu==1.7.4`: Vector similarity search
+  - `scikit-learn==1.3.0`: TF-IDF implementation
+
+## 🚀 Getting Started
+
+1. **Installation**
+   ```bash
    pip install -r requirements.txt
    ```
 
-5. **Install Ollama** (for local LLM inference):
-   - Follow instructions at [ollama.ai](https://ollama.ai/)
-   - Pull the required models:
+2. **Configuration**
+   - Create `.streamlit/secrets.toml`:
+     ```toml
+     groq_api_key = "your-groq-api-key"
      ```
-     ollama pull llama3
-     ```
 
-## Usage
+3. **Running the Application**
+   ```bash
+   streamlit run streamlit_app.py
+   ```
 
-### Running the Application Locally
+## 🔍 How It Works
 
-Start the Streamlit application:
+1. **Document Processing**
+   - PDFs are uploaded and processed
+   - Text is extracted and chunked
+   - Chunks are embedded and stored
 
-```
-python -m streamlit run streamlit_app.py
-```
+2. **Query Handling**
+   - User submits a question
+   - System retrieves relevant chunks
+   - Context is prepared for the LLM
 
-Or simply:
+3. **Response Generation**
+   - LLM generates response using context
+   - Sources are tracked and attributed
+   - Response is formatted with citations
 
-```
-streamlit run streamlit_app.py
-```
+4. **Source Attribution**
+   - Each response includes source references
+   - Sources are expandable for verification
+   - Page numbers are included when available
 
-### Using the Application
+## 🎯 Key Features
 
-1. **Upload Documents**:
-   - Go to the "Upload & Manage" tab
-   - Upload PDF files
-   - Configure chunking parameters and click "Index Documents"
+- **Context-Aware Responses**
+  - Only uses provided document context
+  - Clear indication when information isn't available
+  - No hallucination or external knowledge
 
-2. **Ask Questions**:
-   - Go to the "Chat" tab
-   - Type your question in the input box
-   - View the response and sources
-   - Try suggested follow-up questions
+- **Source Tracking**
+  - Detailed source attribution
+  - Expandable source references
+  - Page number tracking
 
-## Deploying to Streamlit Cloud
+- **Error Handling**
+  - Graceful fallback to mock LLM
+  - Clear error messages
+  - Robust document processing
 
-This application is designed to work seamlessly with Streamlit Cloud. Follow these steps to deploy:
+## 🔒 Security & Privacy
 
-1. **Push your code to GitHub**:
-   - Create a new GitHub repository
-   - Push your local code to the repository
+- API keys stored in Streamlit secrets
+- No data persistence between sessions
+- Secure document processing
 
-2. **Set up environment variables**:
-   - In Streamlit Cloud, go to your app settings
-   - Add the following secrets:
-     - `OPENAI_API_KEY`: Your OpenAI API key for model access
-
-3. **Deploy the app**:
-   - Connect your GitHub repository to Streamlit Cloud
-   - Select the repository and branch to deploy
-   - Set the main file path to `streamlit_app.py`
-   - Click 'Deploy'
-
-### Important Notes for Cloud Deployment
-
-- The app will automatically use OpenAI's models when deployed to Streamlit Cloud
-- Local files won't persist between sessions unless you use Streamlit Cloud's file storage APIs
-- Indexed documents will be stored in the app's session state while the session is active
-
-### Configuration
-
-You can configure the application using environment variables or by creating a `.env` file:
-
-```
-# LLM Settings
-AGENTIC_RAG_LLM_MODEL_NAME=llama3
-AGENTIC_RAG_LLM_TEMPERATURE=0.1
-
-# Embedding Settings
-AGENTIC_RAG_EMBEDDINGS_MODEL_NAME=all-MiniLM-L6-v2
-
-# Retriever Settings
-AGENTIC_RAG_RETRIEVER_TOP_K=5
-```
-
-## Advanced Usage
-
-### Programmatic API
-
-You can use the components programmatically:
-
-```python
-from app import setup_components
-
-# Set up components
-pdf_parser, text_chunker, embedding_model, vector_db, retriever, agent = setup_components()
-
-# Process a PDF
-documents = pdf_parser.parse_pdf("path/to/document.pdf")
-chunked_docs = text_chunker.chunk_documents(documents)
-embedded_docs = embedding_model.embed_documents(chunked_docs)
-vector_db.add_documents(embedded_docs)
-
-# Query the knowledge base
-result = agent.query("What is the main topic of the document?")
-print(result["response"])
-```
-
-## Development
+## 🛠️ Development
 
 ### Adding New Features
 
-1. **New Document Types**:
-   - Extend the document processing in `src/pdf_processor/`
+1. **New Document Types**
+   - Extend `PDFParser` class
+   - Implement new parser methods
+   - Update chunking strategy
 
-2. **New Embedding Models**:
-   - Add new models in `src/embeddings/embedding_model.py`
+2. **Custom Embeddings**
+   - Implement new embedding class
+   - Update retriever configuration
+   - Test with different models
 
-3. **Custom Agents**:
-   - Create new agent types in `src/agents/`
+3. **UI Enhancements**
+   - Modify Streamlit components
+   - Add new visualization features
+   - Enhance user experience
 
-## License
+## 📝 Best Practices
 
-MIT
+1. **Document Processing**
+   - Use appropriate chunk sizes
+   - Maintain metadata
+   - Handle errors gracefully
 
-## Acknowledgements
+2. **Response Generation**
+   - Always cite sources
+   - Be explicit about limitations
+   - Provide clear follow-up questions
 
-- LangChain and LangGraph for the RAG and orchestration frameworks
-- Sentence Transformers for embedding models
-- Ollama for local LLM integration
-- Streamlit for the user interface
+3. **Error Handling**
+   - Implement proper logging
+   - Provide user feedback
+   - Maintain system stability
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+## 📄 License
+
+MIT License
+
+## 👥 Authors
+
+- Deep Podder
+  - GitHub: [unknown-spec10](https://github.com/unknown-spec10)
+  - LinkedIn: [deeppodder2005](http://www.linkedin.com/in/deeppodder2005)

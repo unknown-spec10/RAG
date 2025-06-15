@@ -44,6 +44,7 @@ class AgentState(TypedDict):
     followup_questions: Optional[List[str]]
     messages: list
     error: Optional[str]
+    sources: Optional[List[Dict[str, Any]]]
 
 class RAGAgent:
     """Agent for orchestrating the RAG workflow using LangGraph."""
@@ -134,8 +135,8 @@ class RAGAgent:
     
     def _generate_response(self, state: AgentState) -> AgentState:
         """Generate a response based on the retrieved documents."""
-        query = state["query"]
-        documents = state["documents"]
+        query = state.get("query", "")
+        documents = state.get("documents", [])
         
         # Format the prompt for the LLM
         prompt = self._format_rag_prompt(query, documents)
@@ -143,16 +144,60 @@ class RAGAgent:
         # Generate response using the LLM
         response = self.llm.invoke(prompt)
         
-        # Update state with the response
-        state["response"] = response.content if hasattr(response, 'content') else str(response)
+        # Parse the response to separate the answer from the source chunks
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # Split the response into answer and sources
+        parts = response_text.split("Source:")
+        answer = parts[0].strip()
+        sources = []
+        
+        # Process the source chunks
+        for part in parts[1:]:
+            if '"' in part:
+                # Extract source name and text
+                source_parts = part.split('"', 2)
+                if len(source_parts) >= 3:
+                    source_name = source_parts[1].strip()
+                    # Extract page number if present
+                    page_num = "Unknown"
+                    if "Page" in source_name:
+                        source_name, page_info = source_name.split("(Page", 1)
+                        source_name = source_name.strip()
+                        page_num = page_info.strip().rstrip(")")
+                    
+                    chunk_text = source_parts[2].strip()
+                    sources.append({
+                        "source": source_name,
+                        "text": chunk_text,
+                        "page": page_num
+                    })
+        
+        # Update state with the response and sources
+        state["response"] = answer
+        state["sources"] = sources
         return state
     
     def _extract_followup_questions(self, state: AgentState) -> AgentState:
-        """Extract follow-up questions from the response."""
+        """Extract follow-up questions based only on the available context."""
         response = state["response"]
+        documents = state["documents"]
         
         # Generate follow-up questions using the LLM
-        prompt = f"Based on this response, generate 2-3 relevant follow-up questions:\n\n{response}"
+        prompt = f"""Based ONLY on the provided context, generate 2-3 relevant follow-up questions.
+Rules:
+1. Questions must be answerable using ONLY the provided context
+2. Do not generate questions about topics not covered in the context
+3. Focus on clarifying or expanding on information that is actually present
+
+Context:
+{chr(10).join([doc['text'] for doc in documents])}
+
+Current Response:
+{response}
+
+Generate 2-3 follow-up questions that can be answered using ONLY the above context:"""
+        
         followup_response = self.llm.invoke(prompt)
         
         # Parse follow-up questions
@@ -160,18 +205,32 @@ class RAGAgent:
         if hasattr(followup_response, 'content'):
             questions = [q.strip() for q in followup_response.content.split('\n') if q.strip()]
         else:
-            questions = ["Can you elaborate on that?", "What else can you tell me about this?"]
+            questions = ["The answer is not available in your policy or documents."]
         
         # Update state with follow-up questions
         state["followup_questions"] = questions
         return state
     
     def _format_rag_prompt(self, query: str, documents: List[Dict[str, Any]]) -> str:
-        """Format the prompt for the LLM."""
-        prompt = f"Query: {query}\n\nContext:\n"
-        for doc in documents:
-            prompt += f"- {doc['text']}\n"
-        prompt += "\nPlease provide a comprehensive response based on the above context."
+        """Format the prompt for the LLM with strict context-based response rules."""
+        system_message = """You are a context-aware assistant. Follow these rules strictly:
+1. ONLY answer using the provided context.
+2. If the answer is not present in the context, respond with: "The answer is not available in your policy or documents."
+3. DO NOT use any external knowledge.
+4. DO NOT make assumptions or fabricate information.
+5. DO NOT try to be helpful by guessing or providing general information.
+6. If the context is insufficient, simply state that the information is not available.
+7. For each piece of information you use, reference which source it came from using Source: "filename" (Page X).
+8. After your response, list ONLY the specific chunks you used to answer the question, in this format:
+   Source: "filename" (Page X)
+   [Relevant chunk text]"""
+
+        prompt = f"{system_message}\n\nContext:\n"
+        for i, doc in enumerate(documents, 1):
+            source_name = doc.get('metadata', {}).get('source', 'Unknown')
+            page_num = doc.get('metadata', {}).get('page', 'Unknown')
+            prompt += f"[Source {i}: {source_name} (Page {page_num})]\n{doc.get('text', '')}\n\n"
+        prompt += f"\nQuestion: {query}\n\nAnswer (based ONLY on the above context, include source references):"
         return prompt
     
     def query(self, query: str, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -183,7 +242,7 @@ class RAGAgent:
             documents: List of documents to search in.
             
         Returns:
-            Dictionary containing the response and follow-up questions.
+            Dictionary containing the response, follow-up questions, and sources.
         """
         # Initialize the state
         state = {
@@ -192,7 +251,8 @@ class RAGAgent:
             "response": None,
             "followup_questions": None,
             "messages": [],
-            "error": None
+            "error": None,
+            "sources": None
         }
         
         # Run the workflow
@@ -200,5 +260,6 @@ class RAGAgent:
         
         return {
             "response": result["response"],
-            "followup_questions": result["followup_questions"]
+            "followup_questions": result["followup_questions"],
+            "sources": result["sources"]  # Include sources in the response
         }

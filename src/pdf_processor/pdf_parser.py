@@ -11,26 +11,34 @@ class PDFParser:
         """Initialize the PDF parser."""
         pass
     
-    def parse_file(self, file_path: str) -> str:
+    def parse_file(self, file_path: str) -> List[Dict[str, Any]]:
         """
-        Parse a PDF file and extract text.
+        Parse a PDF file and extract text with page numbers.
         
         Args:
             file_path: Path to the PDF file.
             
         Returns:
-            Extracted text from the PDF.
+            List of dictionaries containing text and page numbers.
         """
         try:
             with pdfplumber.open(file_path) as pdf:
-                text = ""
-                for page in pdf.pages:
-                    text += page.extract_text()
-                return text
+                documents = []
+                for page_num, page in enumerate(pdf.pages, 1):
+                    text = page.extract_text()
+                    if text:  # Only add pages with text
+                        documents.append({
+                            "text": text,
+                            "metadata": {
+                                "page": page_num,
+                                "total_pages": len(pdf.pages)
+                            }
+                        })
+                return documents
         except Exception as e:
             raise ValueError(f"Error parsing PDF: {str(e)}")
     
-    def parse_cloud_storage(self, bucket_name: str, object_key: str, storage_provider: str = "s3") -> str:
+    def parse_cloud_storage(self, bucket_name: str, object_key: str, storage_provider: str = "s3") -> List[Dict[str, Any]]:
         """
         Parse a PDF file from cloud storage.
         
@@ -40,7 +48,7 @@ class PDFParser:
             storage_provider: Cloud storage provider ('s3' or 'azure').
             
         Returns:
-            Extracted text from the PDF.
+            List of dictionaries containing text and page numbers.
         """
         raise NotImplementedError("Cloud storage parsing is not supported in this implementation")
     
@@ -63,5 +71,6 @@ class PDFParser:
                 "creator": metadata.get('Creator', ''),
                 "producer": metadata.get('Producer', ''),
                 "creation_date": metadata.get('CreationDate', ''),
-                "mod_date": metadata.get('ModDate', '')
+                "mod_date": metadata.get('ModDate', ''),
+                "total_pages": len(pdf.pages)
             }

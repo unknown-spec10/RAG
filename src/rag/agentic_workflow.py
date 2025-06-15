@@ -18,18 +18,17 @@ def process_pdf(file_path: str) -> List[Dict[str, Any]]:
     parser = PDFParser()
     chunker = TextChunker(chunk_size=1000, chunk_overlap=200)
 
-    text = parser.parse_file(file_path)
-    chunks = chunker.chunk_text(text)
+    # Get documents with page numbers
+    documents = parser.parse_file(file_path)
     
-    # Add metadata to chunks
-    documents = []
-    for chunk in chunks:
-        documents.append({
-            "text": chunk["text"],
-            "metadata": {"source": os.path.basename(file_path)}
-        })
+    # Add source information to each document
+    for doc in documents:
+        doc['metadata']['source'] = os.path.basename(file_path)
     
-    return documents
+    # Chunk the documents
+    chunked_docs = chunker.chunk_documents(documents)
+    
+    return chunked_docs
 
 def retrieve_context(query: str, documents: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
     """

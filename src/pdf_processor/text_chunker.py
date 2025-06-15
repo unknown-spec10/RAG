@@ -50,12 +50,13 @@ class TextChunker:
         else:
             raise ValueError(f"Unsupported chunking strategy: {chunking_strategy}")
     
-    def chunk_text(self, text: str) -> List[Dict[str, Any]]:
+    def chunk_text(self, text: str, metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
         Split text into chunks.
         
         Args:
             text: The text to split.
+            metadata: Optional metadata to preserve with chunks.
             
         Returns:
             A list of dictionaries, each containing a chunk of text and its metadata.
@@ -68,11 +69,14 @@ class TextChunker:
             for md_doc in md_header_splits:
                 sub_chunks = self.text_splitter.create_documents([md_doc.page_content])
                 for i, chunk in enumerate(sub_chunks):
-                    metadata = md_doc.metadata.copy()
-                    metadata["chunk_id"] = i
+                    chunk_metadata = {
+                        **(metadata or {}),
+                        **md_doc.metadata,
+                        "chunk_id": i
+                    }
                     chunks.append({
                         "text": chunk.page_content,
-                        "metadata": metadata
+                        "metadata": chunk_metadata
                     })
             return chunks
         else:
@@ -82,6 +86,7 @@ class TextChunker:
                 {
                     "text": sub_text,
                     "metadata": {
+                        **(metadata or {}),
                         "chunk_id": i,
                         "chunk_size": len(sub_text),
                     }
@@ -108,21 +113,8 @@ class TextChunker:
                 continue
                 
             metadata = doc.get("metadata", {})
-            page_num = doc.get("page_num", None)
             
-            chunks = self.chunk_text(text)
-            
-            for i, chunk in enumerate(chunks):
-                chunk_metadata = {
-                    **metadata,
-                    **chunk.get("metadata", {}),
-                    "page_num": page_num,
-                    "chunk_index": i,
-                }
-                
-                results.append({
-                    "text": chunk["text"],
-                    "metadata": chunk_metadata
-                })
+            chunks = self.chunk_text(text, metadata)
+            results.extend(chunks)
         
         return results

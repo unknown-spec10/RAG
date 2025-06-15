@@ -83,22 +83,20 @@ def process_pdf_file(uploaded_file):
         try:
             # Parse PDF
             pdf_parser = PDFParser()
-            text = pdf_parser.parse_file(tmp_path)
+            documents = pdf_parser.parse_file(tmp_path)
             
-            # Create initial document
-            document = {
-                "text": text,
-                "metadata": {"source": uploaded_file.name}
-            }
+            # Add source information to each document
+            for doc in documents:
+                doc['metadata']['source'] = uploaded_file.name
             
-            # Chunk the document
+            # Chunk the documents
             chunker = TextChunker(
                 chunk_size=1000,  # Smaller chunks to stay within token limits
                 chunk_overlap=200,
                 chunking_strategy="recursive"
             )
             
-            chunked_docs = chunker.chunk_documents([document])
+            chunked_docs = chunker.chunk_documents(documents)
             return chunked_docs
             
         finally:
@@ -111,6 +109,25 @@ def process_pdf_file(uploaded_file):
     except Exception as e:
         logger.error(f"Error processing PDF: {str(e)}")
         raise
+
+def display_response(result):
+    """Display the response with sources and follow-up questions."""
+    # Display the response
+    st.write("### Response")
+    st.write(result.get("response", "No response available"))
+    
+    # Display sources with specific chunks
+    st.write("### Supporting Information")
+    sources = result.get("sources", [])
+    for source in sources:
+        with st.expander(f"Source: '{source.get('source', 'Unknown')}' (Page {source.get('page', 'Unknown')})"):
+            st.write(source.get("text", "No text available"))
+    
+    # Display follow-up questions
+    st.write("### Suggested Follow-up Questions")
+    followup_questions = result.get("followup_questions", [])
+    for i, question in enumerate(followup_questions, 1):
+        st.write(f"{i}. {question}")
 
 def main():
     st.title("Document Q&A System")
@@ -146,13 +163,8 @@ def main():
                     result = agent.query(query, chunked_docs)
                     
                     # Display response
-                    st.write(result["response"])
+                    display_response(result)
                     
-                    # Display follow-up questions
-                    if result["followup_questions"]:
-                        for i, question in enumerate(result["followup_questions"], 1):
-                            st.write(f"{i}. {question}")
-                            
                 except Exception as e:
                     logger.error(f"Error processing query: {str(e)}")
                     st.error(f"Error processing query: {str(e)}")
