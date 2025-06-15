@@ -3,13 +3,14 @@ import streamlit as st
 import os
 import sys
 
-# Add the project root to Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add the src directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(current_dir, 'src')
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
 
-from pdf_processor.pdf_parser import PDFParser
-from pdf_processor.text_chunker import TextChunker
-from agents.rag_agent import RAGAgent, MockLLM
-from rag.chroma_retriever import ChromaRetriever
+# Import from src package
+from src import PDFParser, TextChunker, RAGAgent, MockLLM, ChromaRetriever
 import logging
 import tempfile
 from typing import Optional
