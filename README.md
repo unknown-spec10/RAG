@@ -1,4 +1,3 @@
-
 # Agentic RAG System
 
 A sophisticated Retrieval-Augmented Generation (RAG) system that enables intelligent document Q&A using advanced language models. This system combines document processing, semantic search, and LLM capabilities to provide accurate, context-aware responses.
@@ -220,3 +219,26 @@ MIT License
 - Deep Podder
   - GitHub: [unknown-spec10](https://github.com/unknown-spec10)
   - LinkedIn: [deeppodder2005](http://www.linkedin.com/in/deeppodder2005)
+
+## Streamlit Cloud Deployment
+
+To deploy this application to Streamlit Cloud:
+
+1. Push your code to a GitHub repository
+2. Go to [share.streamlit.io](https://share.streamlit.io)
+3. Sign in with your GitHub account
+4. Click "New app"
+5. Select your repository, branch, and main file path (`streamlit_app.py`)
+6. Add your secrets:
+   - Go to the app's settings
+   - Add the following secret:
+     - `groq_api_key`: Your Groq API key (should start with `gsk_`)
+
+The app will be automatically deployed and you'll get a public URL to share.
+
+### Important Notes for Deployment
+
+- The app is configured to handle PDF files up to 200MB
+- Make sure your Groq API key is properly set in Streamlit Cloud secrets
+- The app uses TFIDF embeddings which are lightweight and suitable for cloud deployment
+- All dependencies are pinned to specific versions for stability
