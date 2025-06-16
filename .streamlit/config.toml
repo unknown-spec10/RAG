@@ -1,5 +1,5 @@
 [theme]
-primaryColor = "#FF4B4B"
+primaryColor = "#4B8BBE"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
@@ -13,15 +13,22 @@ fileWatcherType = "none"
 # enableXsrfProtection = false
 # enableStaticServing = true
 
-maxUploadSize = 200
+maxUploadSize = 10
 enableXsrfProtection = true
 enableCORS = false
+headless = true
 
 [browser]
 gatherUsageStats = false
+serverAddress = "0.0.0.0"
+serverPort = 8501
 
 [runner]
 # Sets the number of seconds to wait for the script to stop when rerunning
 fastReruns = true
 
 magicEnabled = true
+
+[logger]
+level = "info"
+messageFormat = "%(asctime)s - %(message)s"

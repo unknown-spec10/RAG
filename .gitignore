@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -22,16 +21,11 @@ wheels/
 *.egg
 
 # Virtual Environment
+.env
+.venv
 venv/
 ENV/
-.env
-
-# Streamlit
-.streamlit/secrets.toml
-
-# Data directories (don't commit user data)
-data/pdfs/
-data/cache/
+env/
 
 # IDE
 .idea/
@@ -39,9 +33,28 @@ data/cache/
 *.swp
 *.swo
 
+# Logs
+*.log
+logs/
+log/
+
+# Data and databases
+data/
+.chroma/
+*.db
+*.sqlite3
+
+# Streamlit
+.streamlit/secrets.toml
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
 
 # Project specific
 vector_store/
