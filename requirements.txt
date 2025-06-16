@@ -1,6 +1,6 @@
 # Core dependencies
-streamlit==1.30.0
-python-dotenv==1.0.0
+streamlit>=1.32.0
+python-dotenv>=1.0.0
 pydantic==2.10.3
 setuptools>=68.0.0
 wheel>=0.42.0
@@ -20,13 +20,13 @@ langchain-core==0.1.46
 langsmith>=0.1.17,<0.2.0
 
 # Vector store and embeddings
-chromadb==0.4.22
+chromadb>=0.4.24
 numpy>=1.26.0 
 scikit-learn==1.3.0
 sentence-transformers>=2.2.2
 
 # LLM providers
-groq==0.4.1
+groq>=0.4.2
 langchain-groq==0.1.0
 
 # Development dependencies (optional for deployment)
