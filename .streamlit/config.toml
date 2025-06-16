@@ -16,9 +16,7 @@ fileWatcherType = "none"
 maxUploadSize = 10
 enableXsrfProtection = true
 enableCORS = false
-headless = false
-address = "127.0.0.1"
-port = 5000
+headless = true
 
 [browser]
 gatherUsageStats = false
