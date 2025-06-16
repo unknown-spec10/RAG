@@ -1,20 +1,30 @@
 """Streamlit app for RAG system."""
 import streamlit as st
 import os
-from src.rag.pdf_processor.pdf_parser import PDFParser
-from src.rag.pdf_processor.text_chunker import TextChunker
-from src.rag.agents.rag_agent import RAGAgent, MockLLM
-from src.rag.chroma_retriever import ChromaRetriever
+import sys
 import logging
 import tempfile
 from typing import Optional
+
+# Add the project root to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+try:
+    from src.rag.pdf_processor.pdf_parser import PDFParser
+    from src.rag.pdf_processor.text_chunker import TextChunker
+    from src.rag.agents.rag_agent import RAGAgent, MockLLM
+    from src.rag.chroma_retriever import ChromaRetriever
+except ImportError as e:
+    logger.error(f"Error importing required modules: {str(e)}")
+    st.error("Error loading required modules. Please check the application logs.")
+    st.stop()
+
 # Constants
-MAX_FILE_SIZE = 200 * 1024 * 1024  #(matching config.toml)
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB (matching config.toml)
 
 # Initialize session state
 if 'pdf_content' not in st.session_state:
@@ -46,24 +56,35 @@ def initialize_agent():
         # Get API key
         api_key = get_api_key()
         if not api_key:
+            st.error("Failed to get API key. Please check your Streamlit Cloud secrets.")
             return None
             
         # Initialize retriever with ChromaDB
-        retriever = ChromaRetriever()
+        try:
+            retriever = ChromaRetriever()
+        except Exception as e:
+            logger.error(f"Error initializing ChromaDB: {str(e)}")
+            st.error("Failed to initialize document database. Please try again.")
+            return None
         
         # Initialize agent
-        agent = RAGAgent(
-            retriever=retriever,
-            api_key=api_key
-        )
+        try:
+            agent = RAGAgent(
+                retriever=retriever,
+                api_key=api_key
+            )
+        except Exception as e:
+            logger.error(f"Error initializing RAG agent: {str(e)}")
+            st.error("Failed to initialize AI agent. Please try again.")
+            return None
         
         # Store the LLM type in session state
         st.session_state.using_mock_llm = isinstance(agent.llm, MockLLM)
         
         return agent
     except Exception as e:
-        logger.error(f"Error initializing agent: {str(e)}")
-        st.error(f"Error initializing agent: {str(e)}")
+        logger.error(f"Error in agent initialization: {str(e)}")
+        st.error("An unexpected error occurred during initialization. Please try again.")
         return None
 
 def process_pdf_file(uploaded_file):
