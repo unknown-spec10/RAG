@@ -1,19 +1,10 @@
 """Streamlit app for RAG system."""
 import streamlit as st
 import os
-import sys
-
-# Add the src directory to Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.join(current_dir, 'src')
-if src_dir not in sys.path:
-    sys.path.insert(0, src_dir)
-
-# Import from src directory
-from rag.pdf_processor.pdf_parser import PDFParser
-from rag.pdf_processor.text_chunker import TextChunker
-from rag.agents.rag_agent import RAGAgent, MockLLM
-from rag.rag.chroma_retriever import ChromaRetriever
+from src.rag.pdf_processor.pdf_parser import PDFParser
+from src.rag.pdf_processor.text_chunker import TextChunker
+from src.rag.agents.rag_agent import RAGAgent, MockLLM
+from src.rag.chroma_retriever import ChromaRetriever
 import logging
 import tempfile
 from typing import Optional
@@ -98,8 +89,8 @@ def process_pdf_file(uploaded_file):
             
             # Chunk the documents
             chunker = TextChunker(
-                chunk_size=2000,  # Increased chunk size
-                chunk_overlap=400,  # Increased overlap
+                chunk_size=1000,  # Smaller chunks to stay within token limits
+                chunk_overlap=200,
                 chunking_strategy="recursive"
             )
             

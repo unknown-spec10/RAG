@@ -1,6 +1,6 @@
-from src.rag.retriever import RAGRetriever
-from src.rag.embeddings import TFIDFEmbeddings
-from src.agents.rag_agent import RAGAgent
+from src.rag.rag.retriever import RAGRetriever
+from src.rag.rag.embeddings import TFIDFEmbeddings
+from src.rag.agents.rag_agent import RAGAgent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult

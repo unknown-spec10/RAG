@@ -1,6 +1,6 @@
 import unittest
-from src.rag.retriever import RAGRetriever
-from src.rag.embeddings import TFIDFEmbeddings
+from src.rag.rag.retriever import RAGRetriever
+from src.rag.rag.embeddings import TFIDFEmbeddings
 import numpy as np
 
 class TestEmbeddings(unittest.TestCase):

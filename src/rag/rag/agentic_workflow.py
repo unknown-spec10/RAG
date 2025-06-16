@@ -3,9 +3,9 @@ Agentic RAG workflow for PDF processing and question answering.
 """
 import os
 from typing import Optional, List, Dict, Any
-from src.pdf_processor.pdf_parser import PDFParser
-from src.pdf_processor.text_chunker import TextChunker
-from src.rag.retriever import RAGRetriever
+from src.rag.pdf_processor.pdf_parser import PDFParser
+from src.rag.pdf_processor.text_chunker import TextChunker
+from src.rag.rag.retriever import RAGRetriever
 
 def process_pdf(file_path: str) -> List[Dict[str, Any]]:
     """
