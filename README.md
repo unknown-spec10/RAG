@@ -21,9 +21,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
 2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 3. Set up environment variables:
 ```bash
@@ -32,9 +32,9 @@ cp .env.example .env
 ```
 
 4. Run the application:
-```bash
-streamlit run streamlit_app.py
-```
+   ```bash
+   streamlit run streamlit_app.py
+   ```
 
 ### Production Deployment
 

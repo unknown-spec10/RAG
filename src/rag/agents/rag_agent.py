@@ -183,11 +183,11 @@ class RAGAgent:
                 sources.append(source_info)
             else:
                 # If no clear source format, add as is
-                sources.append({
+                    sources.append({
                     'source': 'Unknown',
                     'page': 'Unknown',
                     'text': part.strip()
-                })
+                    })
         
         # Update state with the response and sources
         state["response"] = answer
