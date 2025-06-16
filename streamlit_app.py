@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB (matching config.toml)
+MAX_FILE_SIZE = 200 * 1024 * 1024  #(matching config.toml)
 
 # Initialize session state
 if 'pdf_content' not in st.session_state:
@@ -128,7 +128,7 @@ def display_response(result):
         st.write(f"{i}. {question}")
 
 def main():
-    st.title("Document Q&A System")
+    st.title("Gyaan Saarathi")
     
     # Initialize the agent
     agent = initialize_agent()
@@ -170,6 +170,10 @@ def main():
         except Exception as e:
             logger.error(f"Error processing file: {str(e)}")
             st.error(f"Error processing file: {str(e)}")
+    
+    # credits
+    st.markdown("---")
+    st.markdown("----Created and maintained by Deep Podder----")
 
 if __name__ == "__main__":
     main() 

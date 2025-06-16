@@ -153,24 +153,41 @@ class RAGAgent:
         
         # Process the source chunks
         for part in parts[1:]:
+            part = part.strip()
+            if not part:
+                continue
+                
+            # Try to extract source information
+            source_info = {}
+            
+            # Look for source name in quotes
             if '"' in part:
-                # Extract source name and text
-                source_parts = part.split('"', 2)
-                if len(source_parts) >= 3:
-                    source_name = source_parts[1].strip()
-                    # Extract page number if present
-                    page_num = "Unknown"
-                    if "Page" in source_name:
-                        source_name, page_info = source_name.split("(Page", 1)
-                        source_name = source_name.strip()
-                        page_num = page_info.strip().rstrip(")")
-                    
-                    chunk_text = source_parts[2].strip()
-                    sources.append({
-                        "source": source_name,
-                        "text": chunk_text,
-                        "page": page_num
-                    })
+                quote_parts = part.split('"', 2)
+                if len(quote_parts) >= 3:
+                    source_info['source'] = quote_parts[1].strip()
+                    part = quote_parts[2].strip()
+            
+            # Look for page number
+            if "(Page" in part:
+                page_parts = part.split("(Page", 1)
+                if len(page_parts) >= 2:
+                    if not source_info.get('source'):
+                        source_info['source'] = page_parts[0].strip()
+                    page_info = page_parts[1].split(")", 1)
+                    source_info['page'] = page_info[0].strip()
+                    part = page_info[1].strip() if len(page_info) > 1 else ""
+            
+            # If we found source info, add it to sources
+            if source_info:
+                source_info['text'] = part.strip()
+                sources.append(source_info)
+            else:
+                # If no clear source format, add as is
+                sources.append({
+                    'source': 'Unknown',
+                    'page': 'Unknown',
+                    'text': part.strip()
+                })
         
         # Update state with the response and sources
         state["response"] = answer
