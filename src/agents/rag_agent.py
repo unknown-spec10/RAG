@@ -2,6 +2,14 @@
 from typing import List, Dict, Any, Optional, TypedDict
 import logging
 import os
+import uuid
+import json
+from datetime import datetime
+from typing import Union
+
+# Configure standard logging
+logger = logging.getLogger(__name__)
+
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
 from langchain_core.language_models import BaseChatModel
@@ -9,6 +17,10 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from src.rag.chroma_retriever import ChromaRetriever
 from src.rag.rag.context_protocol import ContextProtocolManager, ContextSet
+from src.rag.hybrid_retriever import HybridRetriever
+from src.rag.rerankers import JinaReranker
+from src.rag.rag.retriever import RAGRetriever
+
 
 class MockLLM(BaseChatModel):
     """Mock LLM for testing and fallback purposes."""
@@ -35,8 +47,8 @@ class MockLLM(BaseChatModel):
         generation = ChatGeneration(message=AIMessage(content=response_text))
         return ChatResult(generations=[generation])
 
-class AgentState(TypedDict):
-    """State for the RAG agent workflow."""
+class AgentState(TypedDict, total=False):
+    """State for the RAG agent workflow, supporting multi-turn conversations and session tracking."""
     query: str
     context: Optional[ContextSet]
     documents: List[Dict[str, Any]]
@@ -45,6 +57,11 @@ class AgentState(TypedDict):
     messages: list
     error: Optional[str]
     sources: Optional[List[Dict[str, Any]]]
+    chat_id: str  # Unique session ID
+    history: list  # List of dicts with previous queries, answers, docs
+    created_at: str  # ISO timestamp
+    updated_at: str  # ISO timestamp
+
 
 class RAGAgent:
     """Agent for orchestrating the RAG workflow using LangGraph."""
@@ -57,11 +74,15 @@ class RAGAgent:
         context_window: int = 8192,
         max_tokens: int = 1024,
         context_protocol: Optional[ContextProtocolManager] = None,
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        use_hybrid: bool = True,
+        hybrid_alpha: float = 0.5,
+        use_reranker: bool = True,
+        reranker_model: str = "jina-reranker-v1-base-en",
+        tools: Optional[List[Any]] = None  # Add tools argument
     ):
         """
-        Initialize the RAG agent.
-        
+        Initialize the RAG agent with optional hybrid retrieval and re-ranking.
         Args:
             retriever: ChromaDB retriever instance.
             model_name: Name of the LLM to use.
@@ -70,21 +91,46 @@ class RAGAgent:
             max_tokens: Maximum tokens to generate.
             context_protocol: Context protocol manager.
             api_key: Groq API key. If not provided, will look for GROQ_API_KEY environment variable.
+            use_hybrid: Enable hybrid retrieval (vector + keyword)
+            hybrid_alpha: Weight for blending vector and keyword scores
+            use_reranker: Enable Jina re-ranking
+            reranker_model: Jina model name for re-ranking
+            tools: List of tools to integrate with the agent (prototype)
         """
-        self.retriever = retriever
         self.model_name = model_name
         self.temperature = temperature
         self.context_window = context_window
         self.max_tokens = max_tokens
         self.context_protocol = context_protocol or ContextProtocolManager()
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
-        
+        self.use_hybrid = use_hybrid
+        self.hybrid_alpha = hybrid_alpha
+        self.use_reranker = use_reranker
+        self.reranker_model = reranker_model
+        self.tools = tools  # Store tools for future integration
+
+        # --- Hybrid and Reranker Setup ---
+        if use_hybrid:
+            # Set up keyword retriever (TF-IDF)
+            self.keyword_retriever = RAGRetriever()
+            # You must add documents to self.keyword_retriever elsewhere!
+            self.reranker = JinaReranker(model_name=reranker_model) if use_reranker else None
+            self.retriever = HybridRetriever(
+                chroma_retriever=retriever,
+                tfidf_retriever=self.keyword_retriever,
+                reranker=self.reranker,
+                alpha=hybrid_alpha
+            )
+        else:
+            self.retriever = retriever
+            self.reranker = None
+        # ---
+
         # Configure LLM
         self.llm = self._initialize_llm()
-        
         # Initialize the workflow
         self.graph = self._build_graph()
-        
+
     def _initialize_llm(self) -> BaseChatModel:
         """Initialize the LLM (either Groq or Mock)."""
         if self.api_key:
@@ -133,49 +179,51 @@ class RAGAgent:
         return state
     
     def _generate_response(self, state: AgentState) -> AgentState:
-        """Generate a response based on the retrieved documents."""
+        """Generate a response based on the context set (dynamic context sizing), with confidence scoring."""
         query = state.get("query", "")
         documents = state.get("documents", [])
-        
+        context_set = state.get("context")
         # Format the prompt for the LLM
-        prompt = self._format_rag_prompt(query, documents)
-        
+        prompt = self._format_rag_prompt(query, documents, context_set=context_set)
+        # Add a confidence scoring instruction
+        prompt += "\n\nAfter your answer, provide a confidence score (0-1) based ONLY on how much you relied on the provided context versus your own knowledge. Format: CONFIDENCE: <score>"
         # Generate response using the LLM
         response = self.llm.invoke(prompt)
-        
-        # Parse the response to separate the answer from the source chunks
         response_text = response.content if hasattr(response, 'content') else str(response)
-        
+        # Parse confidence score
+        confidence = None
+        if "CONFIDENCE:" in response_text:
+            main, conf_part = response_text.rsplit("CONFIDENCE:", 1)
+            try:
+                confidence = float(conf_part.strip().split()[0])
+            except Exception:
+                confidence = None
+            response_text = main.strip()
         # Split the response into answer and sources
         parts = response_text.split("Source:")
         answer = parts[0].strip()
         sources = []
-        
-        # Process the source chunks
         for part in parts[1:]:
             if '"' in part:
-                # Extract source name and text
                 source_parts = part.split('"', 2)
                 if len(source_parts) >= 3:
                     source_name = source_parts[1].strip()
-                    # Extract page number if present
                     page_num = "Unknown"
                     if "Page" in source_name:
                         source_name, page_info = source_name.split("(Page", 1)
                         source_name = source_name.strip()
                         page_num = page_info.strip().rstrip(")")
-                    
                     chunk_text = source_parts[2].strip()
                     sources.append({
                         "source": source_name,
                         "text": chunk_text,
                         "page": page_num
                     })
-        
-        # Update state with the response and sources
         state["response"] = answer
         state["sources"] = sources
+        state["confidence"] = confidence
         return state
+
     
     def _extract_followup_questions(self, state: AgentState) -> AgentState:
         """Extract follow-up questions based only on the available context."""
@@ -213,21 +261,22 @@ Generate 2-3 follow-up questions that can be answered using ONLY the above conte
         state["followup_questions"] = questions
         return state
     
-    def _format_rag_prompt(self, query: str, documents: List[Dict[str, Any]]) -> str:
-        """Format the prompt for the RAG system."""
-        # Sort documents by similarity score
-        sorted_docs = sorted(documents, key=lambda x: x.get('similarity_score', 0), reverse=True)
-        
-        # Format context with clear source attribution
-        context_parts = []
-        for doc in sorted_docs:
-            source = doc.get('metadata', {}).get('source', 'Unknown')
-            page = doc.get('metadata', {}).get('page', 'Unknown')
-            text = doc.get('text', '')
-            context_parts.append(f"Source: {source} (Page {page})\n{text}\n")
-        
-        context = "\n".join(context_parts)
-        
+    def _format_rag_prompt(self, query: str, documents: List[Dict[str, Any]], context_set: Optional[ContextSet] = None) -> str:
+        """
+        Format the prompt for the RAG system, optionally using a ContextSet for advanced context management.
+        """
+        if context_set is not None:
+            context = context_set.to_formatted_string(include_metadata=True)
+        else:
+            # Fallback to legacy formatting
+            sorted_docs = sorted(documents, key=lambda x: x.get('similarity_score', 0), reverse=True)
+            context_parts = []
+            for doc in sorted_docs:
+                source = doc.get('metadata', {}).get('source', 'Unknown')
+                page = doc.get('metadata', {}).get('page', 'Unknown')
+                text = doc.get('text', '')
+                context_parts.append(f"Source: {source} (Page {page})\n{text}\n")
+            context = "\n".join(context_parts)
         return f"""You are a helpful AI assistant. Use the following context to answer the question.
 If you cannot answer the question using only the provided context, say so.
 Always cite your sources using the format: Source: "source_name (Page X)" followed by the relevant text.
@@ -246,18 +295,19 @@ Question: {query}
 
 Provide a comprehensive answer based ONLY on the provided context. Include relevant source citations."""
 
-    def query(self, query: str) -> Dict[str, Any]:
+    def query(self, query: str, chat_id: str = None, persist_state: bool = False) -> Dict[str, Any]:
         """
-        Process a query using the RAG system.
-        
+        Process a query using the RAG system, with robust error handling, logging, and session support.
         Args:
             query: The query to process
-            
+            chat_id: Optional session ID for multi-turn conversations
+            persist_state: If True, persist AgentState after each step (prototype)
         Returns:
             Dictionary containing the response, sources, and follow-up questions
         """
-        # Initialize the state
-        state = {
+        session_id = chat_id or str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        state: AgentState = {
             "query": query,
             "context": None,
             "documents": [],
@@ -265,24 +315,128 @@ Provide a comprehensive answer based ONLY on the provided context. Include relev
             "followup_questions": None,
             "messages": [],
             "error": None,
-            "sources": None
+            "sources": None,
+            "chat_id": session_id,
+            "history": [],
+            "created_at": now,
+            "updated_at": now
         }
         
+        logger.info(f"RAG Agent session start - query: {query}, chat_id: {session_id}")
         try:
-            # Run the workflow
-            final_state = self.graph.invoke(state)
-            
-            # Return the results
-            return {
-                "response": final_state["response"],
-                "sources": final_state["sources"],
-                "followup_questions": final_state["followup_questions"]
-            }
-            
+            # --- Step 1: Document Retrieval ---
+            try:
+                logger.info(f"RAG Agent retrieval start - chat_id: {session_id}")
+                # HybridRetriever will combine vector and keyword, then rerank via Jina if enabled
+                retrieved_docs = self.retriever.retrieve(query, top_k=8)
+                
+                # Ensure retrieved_docs is not None and is a list
+                if retrieved_docs is None:
+                    retrieved_docs = []
+                elif not isinstance(retrieved_docs, list):
+                    retrieved_docs = []
+                
+                state["documents"] = retrieved_docs
+                logger.info(f"RAG Agent retrieval success - chat_id: {session_id}, docs: {len(retrieved_docs)}")
+                
+                # If no documents retrieved, return early with appropriate message
+                if not retrieved_docs:
+                    state["response"] = "I couldn't find any relevant information to answer your question. Please try rephrasing your query or upload a different document."
+                    state["sources"] = []
+                    state["followup_questions"] = []
+                    if persist_state:
+                        self._persist_state(state)
+                    return self._finalize_state(state)
+                
+            except Exception as e:
+                logger.error(f"RAG Agent retrieval error - chat_id: {session_id}, error: {str(e)}")
+                state["error"] = f"Retrieval error: {str(e)}"
+                if persist_state:
+                    self._persist_state(state)
+                return self._finalize_state(state)
+            # --- Step 2: Context Management and Workflow ---
+            try:
+                logger.info(f"RAG Agent context start - chat_id: {session_id}")
+                # Step 2a: Build initial context set from retrieved docs
+                context_set = self.context_protocol.from_retrieved_documents(state["documents"], query=query)
+
+                # Step 2b: Refine protocol (e.g., prioritize core facts)
+                context_set = self.context_protocol.refine_protocol(context_set, protocol="core-first")
+
+                # Step 2c: Dynamic context sizing (fit for LLM window)
+                # Use a tokenizer compatible with the LLM (user should provide or fallback to .split)
+                try:
+                    import tiktoken
+                    tokenizer = tiktoken.encoding_for_model(self.model_name)
+                except Exception:
+                    tokenizer = type("DummyTokenizer", (), {"encode": lambda self, x: x.split()})()
+                max_tokens = self.context_window
+                expected_response_tokens = self.max_tokens
+                context_set = context_set.prioritize_and_truncate(tokenizer, max_tokens, query, expected_response_tokens)
+
+                # Step 2d: Condense context if still too long
+                if context_set.token_length(tokenizer) + expected_response_tokens > max_tokens:
+                    context_set = context_set.condense(self.llm, max_tokens - expected_response_tokens, tokenizer)
+
+                state["context"] = context_set
+                logger.info(f"RAG Agent context success - chat_id: {session_id}, items: {len(context_set.items)}")
+
+                # Step 2e: Run workflow (graph)
+                final_state = self.graph.invoke(state)
+                logger.info(f"RAG Agent workflow success - chat_id: {session_id}")
+            except Exception as e:
+                logger.error(f"RAG Agent workflow error - chat_id: {session_id}, error: {str(e)}")
+                state["error"] = f"Workflow error: {str(e)}"
+                if persist_state:
+                    self._persist_state(state)
+                return self._finalize_state(state)
+            # --- Step 3: Multi-turn History ---
+            state["history"].append({
+                "query": query,
+                "response": final_state.get("response"),
+                "documents": final_state.get("documents"),
+                "timestamp": now
+            })
+            state.update(final_state)
+            state["updated_at"] = datetime.utcnow().isoformat()
+            if persist_state:
+                self._persist_state(state)
+            logger.info(f"RAG Agent session success - chat_id: {session_id}, response: {final_state.get('response', '')[:100]}...")
+            return self._finalize_state(state)
         except Exception as e:
-            logging.error(f"Error processing query: {str(e)}")
-            return {
-                "response": f"Error processing query: {str(e)}",
-                "sources": [],
-                "followup_questions": []
-            }
+            logger.error(f"RAG Agent session error - chat_id: {session_id}, error: {str(e)}")
+            state["error"] = f"Session error: {str(e)}"
+            if persist_state:
+                self._persist_state(state)
+            return self._finalize_state(state)
+
+    def _persist_state(self, state: AgentState, db_path: str = "rag_sessions.json"):
+        """Persist AgentState to a JSON file (prototype for production DB/Redis)."""
+        try:
+            if os.path.exists(db_path):
+                with open(db_path, "r") as f:
+                    sessions = json.load(f)
+            else:
+                sessions = {}
+            sessions[state["chat_id"]] = state
+            with open(db_path, "w") as f:
+                json.dump(sessions, f, indent=2)
+            logger.info(f"RAG Agent state persisted - chat_id: {state['chat_id']}")
+        except Exception as e:
+            logger.error(f"RAG Agent state persist error - chat_id: {state.get('chat_id')}, error: {str(e)}")
+
+    def _finalize_state(self, state: AgentState) -> Dict[str, Any]:
+        """Return the final state with required fields for output."""
+        return {
+            "response": state.get("response"),
+            "sources": state.get("sources", []),
+            "followup_questions": state.get("followup_questions", []),
+            "chat_id": state.get("chat_id"),
+            "history": state.get("history", []),
+            "error": state.get("error")
+        }
+
+    # --- Async Support (Prototype) ---
+    # import asyncio
+    # async def query_async(...):
+    #     ...

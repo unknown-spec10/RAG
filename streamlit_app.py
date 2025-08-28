@@ -10,13 +10,26 @@ from typing import Optional
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Suppress some verbose loggers
+logging.getLogger('chromadb').setLevel(logging.WARNING)
+logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
+logging.getLogger('transformers').setLevel(logging.WARNING)
+
+# Ensure src/ is on sys.path for import resolution
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'src'))
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
 try:
     from src.rag.pdf_processor.pdf_parser import PDFParser
-    from src.rag.pdf_processor.text_chunker import TextChunker
-    from src.rag.agents.rag_agent import RAGAgent, MockLLM
+    from src.pdf_processor.text_chunker import TextChunker
+    from src.agents.rag_agent import RAGAgent, MockLLM
     from src.rag.chroma_retriever import ChromaRetriever
 except ImportError as e:
     logger.error(f"Error importing required modules: {str(e)}")
@@ -24,7 +37,7 @@ except ImportError as e:
     st.stop()
 
 # Constants
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB (matching config.toml)
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 # Initialize session state
 if 'pdf_content' not in st.session_state:
@@ -50,7 +63,7 @@ def get_api_key() -> Optional[str]:
         st.error("Error accessing API key. Please check your Streamlit Cloud configuration.")
         return None
 
-def initialize_agent():
+def initialize_agent(use_reranker=True):
     """Initialize the RAG agent with proper error handling."""
     try:
         # Get API key
@@ -71,7 +84,8 @@ def initialize_agent():
         try:
             agent = RAGAgent(
                 retriever=retriever,
-                api_key=api_key
+                api_key=api_key,
+                use_reranker=use_reranker
             )
         except Exception as e:
             logger.error(f"Error initializing RAG agent: {str(e)}")
@@ -87,7 +101,7 @@ def initialize_agent():
         st.error("An unexpected error occurred during initialization. Please try again.")
         return None
 
-def process_pdf_file(uploaded_file):
+def process_pdf_file(uploaded_file, chunking_strategy, chunk_size, chunk_overlap):
     """Process uploaded PDF file and return chunked documents."""
     try:
         # Check file size
@@ -104,19 +118,46 @@ def process_pdf_file(uploaded_file):
             pdf_parser = PDFParser()
             documents = pdf_parser.parse_file(tmp_path)
             
-            # Add source information to each document
+            # Add source information to each document and clean metadata
             for doc in documents:
+                # Ensure metadata exists
+                if 'metadata' not in doc:
+                    doc['metadata'] = {}
+                
+                # Add source information
                 doc['metadata']['source'] = uploaded_file.name
+                
+                # Clean metadata to ensure no None values
+                cleaned_metadata = {}
+                for key, value in doc['metadata'].items():
+                    if value is None:
+                        cleaned_metadata[key] = ""
+                    elif isinstance(value, (str, int, float, bool)):
+                        cleaned_metadata[key] = value
+                    else:
+                        cleaned_metadata[key] = str(value)
+                doc['metadata'] = cleaned_metadata
             
-            # Chunk the documents
-            chunker = TextChunker(
-                chunk_size=1000,  # Smaller chunks to stay within token limits
-                chunk_overlap=200,
-                chunking_strategy="recursive"
-            )
-            
-            chunked_docs = chunker.chunk_documents(documents)
-            return chunked_docs
+            # Chunk the documents with error handling
+            try:
+                chunker = TextChunker(
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    chunking_strategy=chunking_strategy
+                )
+                chunked_docs = chunker.chunk_documents(documents)
+                return chunked_docs
+            except Exception as chunking_error:
+                logger.error(f"Error during chunking with strategy '{chunking_strategy}': {str(chunking_error)}")
+                # Fallback to recursive chunking
+                st.warning(f"Chunking strategy '{chunking_strategy}' failed, falling back to recursive chunking.")
+                chunker = TextChunker(
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    chunking_strategy="recursive"
+                )
+                chunked_docs = chunker.chunk_documents(documents)
+                return chunked_docs
             
         finally:
             # Clean up temporary file
@@ -134,6 +175,9 @@ def display_response(result):
     # Display the response
     st.write("### Response")
     st.write(result.get("response", "No response available"))
+    # Show confidence score if present
+    if "confidence" in result:
+        st.info(f"**LLM Confidence Score:** {result['confidence']:.2f}")
     
     # Display sources with specific chunks
     st.write("### Supporting Information")
@@ -149,48 +193,64 @@ def display_response(result):
         st.write(f"{i}. {question}")
 
 def main():
-    st.title("Gyaan Saarathi")
-    
+    st.title("Sasthya Samadhan :)")
+    st.markdown("""
+    <style>
+    .big-font {font-size:20px !important;}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Session reset
+    if st.button("🔄 Reset Session"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.experimental_rerun()
+
+    # Chunking controls
+    st.sidebar.header("Chunking Options")
+    chunking_strategy = st.sidebar.selectbox("Chunking Strategy", ["recursive", "semantic"], index=0)
+    chunk_size = st.sidebar.slider("Chunk Size", min_value=200, max_value=2000, value=1000, step=100)
+    chunk_overlap = st.sidebar.slider("Chunk Overlap", min_value=0, max_value=500, value=200, step=50)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("Created and maintained by Deep Podder")
+
     # Initialize the agent
     agent = initialize_agent()
     if agent is None:
         st.stop()
-    
+
     # File upload with size limit
     uploaded_file = st.file_uploader(
         "Upload a PDF document",
         type=['pdf'],
-        help=f"Maximum file size: {MAX_FILE_SIZE/1024/1024}MB"
+        help=f"Maximum file size: {MAX_FILE_SIZE/1024/1024}MB",
+        key="pdf_uploader"
     )
-    
+
     if uploaded_file is not None:
-        try:
-            # Process the PDF and get chunked documents
-            chunked_docs = process_pdf_file(uploaded_file)
-            
-            # Add documents to retriever
-            agent.retriever.add_documents(chunked_docs)
-            
-            st.success(f"Document processed successfully! Created {len(chunked_docs)} chunks.")
-            
-            # Query input
-            query = st.text_input("Ask a question about the document:")
-            
-            if query:
-                try:
-                    # Process the query
-                    result = agent.query(query)
-                    
-                    # Display response
-                    display_response(result)
-                    
-                except Exception as e:
-                    logger.error(f"Error processing query: {str(e)}")
-                    st.error(f"Error processing query: {str(e)}")
-                    
-        except Exception as e:
-            logger.error(f"Error processing file: {str(e)}")
-            st.error(f"Error processing file: {str(e)}")
+        uploaded_file.seek(0, 2)
+        file_size_mb = uploaded_file.tell() / (1024 * 1024)
+        uploaded_file.seek(0)
+        if file_size_mb > 50:
+            st.error(f"File is too large. Maximum allowed size is 50MB. Your file is {file_size_mb:.2f}MB.")
+        else:
+            try:
+                # Process the PDF and get chunked documents
+                chunked_docs = process_pdf_file(uploaded_file, chunking_strategy, chunk_size, chunk_overlap)
+                st.success(f"Document processed successfully! Created {len(chunked_docs)} chunks.")
+                agent.retriever.add_documents(chunked_docs)
+                # Query input
+                query = st.text_input("Ask a question about the document:")
+                if query:
+                    try:
+                        result = agent.query(query)
+                        display_response(result)
+                    except Exception as e:
+                        logger.error(f"Error processing query: {str(e)}")
+                        st.error(f"Error processing query: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error processing file: {str(e)}")
+                st.error(f"Error processing file: {str(e)}")
     
     # credits
     st.markdown("---")

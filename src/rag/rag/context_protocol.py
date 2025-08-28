@@ -14,6 +14,10 @@ class ContextItem(BaseModel):
 
 
 class ContextSet(BaseModel):
+    """
+    Enhanced ContextSet supporting dynamic sizing, prioritization, and condensation.
+    """
+
     """A collection of context items with associated metadata."""
     
     items: List[ContextItem] = Field(default_factory=list, description="Collection of context items")
@@ -65,6 +69,79 @@ class ContextSet(BaseModel):
             
         return "\n\n".join(output)
     
+    def token_length(self, llm_tokenizer) -> int:
+        """
+        Estimate token length of the context set using the provided tokenizer.
+        Args:
+            llm_tokenizer: Callable or tokenizer object with encode method
+        Returns:
+            Total token count
+        """
+        text = self.to_llm_context()
+        return len(llm_tokenizer.encode(text))
+
+    def prioritize_and_truncate(self, llm_tokenizer, max_tokens: int, query: str = None, expected_response_tokens: int = 512) -> "ContextSet":
+        """
+        Prioritize and truncate context items to fit within the available token window.
+        Args:
+            llm_tokenizer: Tokenizer for token counting
+            max_tokens: Total LLM context window
+            query: The user query (for relevance)
+            expected_response_tokens: Reserve this many tokens for the LLM's response
+        Returns:
+            New ContextSet with prioritized and truncated items
+        """
+        # Simple prioritization: core facts > background > counter-arguments > other
+        priority_map = {"core": 0, "background": 1, "counter": 2, "other": 3}
+        def get_priority(item):
+            t = item.metadata.get("context_type", "other")
+            return priority_map.get(t, 3)
+        sorted_items = sorted(self.items, key=get_priority)
+        # Iteratively add items until token limit is reached
+        new_set = ContextSet(query=self.query, metadata=self.metadata.copy())
+        used_tokens = len(llm_tokenizer.encode(query or "")) + expected_response_tokens
+        for item in sorted_items:
+            candidate_set = ContextSet(items=new_set.items + [item], query=self.query, metadata=self.metadata.copy())
+            tokens = candidate_set.token_length(llm_tokenizer)
+            if tokens + used_tokens > max_tokens:
+                break
+            new_set.items.append(item)
+        return new_set
+
+    def condense(self, llm, target_tokens: int, llm_tokenizer=None) -> "ContextSet":
+        """
+        Summarize/condense the least important context to fit within target_tokens.
+        Args:
+            llm: LLM or summarization model (must have invoke or __call__)
+            target_tokens: Target total tokens for context
+            llm_tokenizer: Optional tokenizer for token counting
+        Returns:
+            New ContextSet with condensed items
+        """
+        if llm_tokenizer is None:
+            def count_tokens(text): return len(text.split())
+        else:
+            def count_tokens(text): return len(llm_tokenizer.encode(text))
+        # If already fits, return self
+        if self.token_length(llm_tokenizer or (lambda x: x.split())) <= target_tokens:
+            return self
+        # Condense least important items
+        sorted_items = sorted(self.items, key=lambda x: x.metadata.get("context_type", "other"))
+        # Summarize the last N items until fits
+        items = list(sorted_items)
+        while items and ContextSet(items=items, query=self.query, metadata=self.metadata.copy()).token_length(llm_tokenizer or (lambda x: x.split())) > target_tokens:
+            # Take the least important item(s)
+            to_summarize = items[-1]
+            summary = llm.invoke(f"Summarize the following for context compression:\n{to_summarize.content}")
+            items[-1] = ContextItem(content=summary if isinstance(summary, str) else getattr(summary, 'content', str(summary)),
+                                   source_id=to_summarize.source_id,
+                                   source_type=to_summarize.source_type,
+                                   metadata=to_summarize.metadata)
+            # Optionally merge multiple items, or drop if still too long
+            if count_tokens(items[-1].content) < 10:
+                items.pop(-1)
+        return ContextSet(items=items, query=self.query, metadata=self.metadata.copy())
+
     def to_llm_context(self) -> str:
         """
         Format the context set for LLM consumption.
@@ -81,6 +158,10 @@ class ContextSet(BaseModel):
 
 
 class ContextProtocolManager:
+    """
+    Enhanced ContextProtocolManager supporting protocol refinement and dynamic context sizing.
+    """
+
     """Manager for handling context protocol operations."""
     
     def __init__(self):
@@ -122,6 +203,27 @@ class ContextProtocolManager:
             
         return context_set
     
+    def refine_protocol(self, context_set: ContextSet, protocol: str = "default") -> ContextSet:
+        """
+        Refine context protocol by reordering or filtering context items according to protocol.
+        Args:
+            context_set: The ContextSet to refine
+            protocol: Protocol type (e.g., 'default', 'core-first', 'background-minimal')
+        Returns:
+            Refined ContextSet
+        """
+        if protocol == "core-first":
+            # Move core facts to front
+            core = [i for i in context_set.items if i.metadata.get("context_type") == "core"]
+            rest = [i for i in context_set.items if i.metadata.get("context_type") != "core"]
+            return ContextSet(items=core + rest, query=context_set.query, metadata=context_set.metadata.copy())
+        elif protocol == "background-minimal":
+            # Drop background info
+            filtered = [i for i in context_set.items if i.metadata.get("context_type") != "background"]
+            return ContextSet(items=filtered, query=context_set.query, metadata=context_set.metadata.copy())
+        # Default: no change
+        return context_set
+
     def merge_context_sets(self, *context_sets: ContextSet) -> ContextSet:
         """
         Merge multiple context sets into one.

@@ -6,6 +6,9 @@ from chromadb.utils import embedding_functions
 import os
 import logging
 
+# Disable ChromaDB telemetry to avoid warnings
+os.environ['ANONYMIZED_TELEMETRY'] = 'False'
+
 logger = logging.getLogger(__name__)
 
 class ChromaRetriever:
@@ -33,13 +36,27 @@ class ChromaRetriever:
         # Prepare documents for ChromaDB
         ids = [f"doc_{self.doc_count + i}" for i in range(len(documents))]
         texts = [doc["text"] for doc in documents]
-        metadatas = [doc["metadata"] for doc in documents]
+        
+        # Clean metadata - ChromaDB only accepts str, int, float, bool values
+        cleaned_metadatas = []
+        for doc in documents:
+            metadata = doc.get("metadata", {})
+            cleaned_metadata = {}
+            for key, value in metadata.items():
+                if value is None:
+                    cleaned_metadata[key] = ""  # Convert None to empty string
+                elif isinstance(value, (str, int, float, bool)):
+                    cleaned_metadata[key] = value
+                else:
+                    # Convert other types to string
+                    cleaned_metadata[key] = str(value)
+            cleaned_metadatas.append(cleaned_metadata)
         
         # Add to collection
         self.collection.add(
             ids=ids,
             documents=texts,
-            metadatas=metadatas
+            metadatas=cleaned_metadatas
         )
         
         # Update document counter

@@ -1,0 +1,63 @@
+# RAG Workflow Overview
+
+## 1. User Query Input
+- **Component(s):**
+  - `streamlit_app.py` (UI entry point)
+  - User submits a query via the web interface.
+
+## 2. Query Handling and State Initialization
+- **Component(s):**
+  - `RAGAgent` (`src/agents/rag_agent.py`)
+  - Initializes `AgentState` with the user query and empty context, documents, etc.
+
+## 3. Document Retrieval
+- **Component(s):**
+  - `ChromaRetriever` (`src/rag/chroma_retriever.py`)
+  - `EmbeddingModel` (`src/embeddings/embedding_model.py`)
+  - Retrieves relevant documents from the vector store (ChromaDB) using embeddings.
+
+## 4. Context Management (Optional)
+- **Component(s):**
+  - `ContextProtocolManager`, `ContextSet` (`src/rag/rag/context_protocol.py`)
+  - Manages context window and protocol for the RAG workflow.
+
+## 5. Text Chunking (Preprocessing)
+- **Component(s):**
+  - `TextChunker` (`src/pdf_processor/text_chunker.py`)
+  - Splits documents into manageable chunks for embedding and retrieval.
+
+## 6. Prompt Formatting
+- **Component(s):**
+  - `RAGAgent._format_rag_prompt` (`src/agents/rag_agent.py`)
+  - Formats the prompt with retrieved context for the LLM.
+
+## 7. Response Generation (LLM)
+- **Component(s):**
+  - `ChatGroq` (via `langchain-groq`)
+  - `MockLLM` (fallback)
+  - Generates a response using the provided context and prompt.
+
+## 8. Follow-up Question Generation
+- **Component(s):**
+  - `RAGAgent._extract_followup_questions` (`src/agents/rag_agent.py`)
+  - Uses LLM to generate relevant follow-up questions based on the answer and context.
+
+## 9. Source Attribution
+- **Component(s):**
+  - `RAGAgent._format_rag_prompt` and post-processing
+  - Ensures all answers include proper citations to source documents.
+
+## 10. Caching (Optional)
+- **Component(s):**
+  - `FileCache` (`src/utils/cache.py`)
+  - Caches processed files and their embeddings to avoid redundant computation.
+
+## 11. Configuration Management
+- **Component(s):**
+  - `Config` (`src/utils/config.py`)
+  - Centralizes settings for LLM, chunking, retriever, etc.
+
+## 12. Output to User
+- **Component(s):**
+  - `streamlit_app.py`
+  - Displays the answer, sources, and follow-up questions in the UI.
