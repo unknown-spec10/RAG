@@ -20,6 +20,8 @@ from src.rag.rag.context_protocol import ContextProtocolManager, ContextSet
 from src.rag.hybrid_retriever import HybridRetriever
 from src.rag.rerankers import JinaReranker
 from src.rag.rag.retriever import RAGRetriever
+from src.agents.orchestrator_agent import OrchestratorAgent
+from src.agents.web_search_agent import WebSearchAgent
 
 
 class MockLLM(BaseChatModel):
@@ -79,7 +81,8 @@ class RAGAgent:
         hybrid_alpha: float = 0.5,
         use_reranker: bool = True,
         reranker_model: str = "jina-reranker-v1-base-en",
-        tools: Optional[List[Any]] = None  # Add tools argument
+        tools: Optional[List[Any]] = None,  # Add tools argument
+        serp_api_key: Optional[str] = None  # Add SERP API key
     ):
         """
         Initialize the RAG agent with optional hybrid retrieval and re-ranking.
@@ -96,6 +99,7 @@ class RAGAgent:
             use_reranker: Enable Jina re-ranking
             reranker_model: Jina model name for re-ranking
             tools: List of tools to integrate with the agent (prototype)
+            serp_api_key: SERP API key for web search functionality
         """
         self.model_name = model_name
         self.temperature = temperature
@@ -108,6 +112,10 @@ class RAGAgent:
         self.use_reranker = use_reranker
         self.reranker_model = reranker_model
         self.tools = tools  # Store tools for future integration
+        
+        # Initialize orchestrator and web search agents
+        self.orchestrator = OrchestratorAgent(api_key=self.api_key, model_name=model_name)
+        self.web_search_agent = WebSearchAgent(serp_api_key)
 
         # --- Hybrid and Reranker Setup ---
         if use_hybrid:
@@ -294,6 +302,258 @@ Context:
 Question: {query}
 
 Provide a comprehensive answer based ONLY on the provided context. Include relevant source citations."""
+
+    def query_with_orchestration(self, query: str, chat_id: str = None, user_consent_callback=None) -> Dict[str, Any]:
+        """
+        Process a query using orchestrated search strategy with privacy protection.
+        
+        Args:
+            query: The user query
+            chat_id: Optional session ID
+            user_consent_callback: Function to get user consent for web search
+            
+        Returns:
+            Dictionary with response, sources, analysis, and follow-up questions
+        """
+        # Step 1: Analyze query with orchestrator
+        has_local_docs = hasattr(self.retriever, 'doc_count') and self.retriever.doc_count > 0
+        analysis = self.orchestrator.analyze_query(query, has_local_docs)
+        
+        logger.info(f"Query analysis: {analysis['reasoning']}")
+        
+        # Step 2: Check if user consent is required for web search
+        if analysis['strategy']['require_user_consent'] and analysis['strategy']['use_web_search']:
+            if user_consent_callback:
+                consent_granted = user_consent_callback(analysis)
+                if not consent_granted:
+                    # Use only local search
+                    analysis['strategy']['use_web_search'] = False
+                    logger.info("User declined web search, using local search only")
+            else:
+                # No consent callback provided, skip web search
+                analysis['strategy']['use_web_search'] = False
+                logger.info("No consent callback provided, skipping web search")
+        
+        # Step 3: Gather information based on strategy
+        local_results = []
+        web_results = []
+        
+        # Local search
+        if analysis['strategy']['use_local_search']:
+            try:
+                local_results = self.retriever.retrieve(query, top_k=8)
+                logger.info(f"Retrieved {len(local_results)} local documents")
+            except Exception as e:
+                logger.error(f"Local search failed: {str(e)}")
+        
+        # Web search
+        if analysis['strategy']['use_web_search'] and self.web_search_agent.is_available():
+            try:
+                filtered_query = analysis['filtered_query']
+                web_results = self.web_search_agent.search_general(filtered_query)
+                logger.info(f"Retrieved {len(web_results)} web results for query: {filtered_query}")
+            except Exception as e:
+                logger.error(f"Web search failed: {str(e)}")
+        
+        # Step 4: Combine and process results
+        combined_context = self._combine_local_and_web_results(local_results, web_results, analysis)
+        
+        # Step 5: Generate response using combined context
+        if combined_context:
+            response_result = self._generate_response_with_context(query, combined_context, chat_id)
+        else:
+            response_result = {
+                "response": "I couldn't find sufficient information to answer your question. Please try rephrasing your query or providing more context.",
+                "sources": [],
+                "followup_questions": []
+            }
+        
+        # Step 6: Add analysis information to response
+        response_result.update({
+            "query_analysis": {
+                "privacy_level": analysis['privacy_level'],
+                "query_type": analysis['query_type'],
+                "strategy_used": analysis['strategy'],
+                "reasoning": analysis['reasoning'],
+                "filtered_query": analysis.get('filtered_query'),
+                "local_results_count": len(local_results),
+                "web_results_count": len(web_results)
+            }
+        })
+        
+        return response_result
+
+    def _combine_local_and_web_results(self, local_results: List[Dict], web_results: List[Dict], analysis: Dict) -> str:
+        """Combine local and web search results into a coherent context."""
+        combined_parts = []
+        
+        # Add local results
+        if local_results:
+            local_context = "Local Document Information:\n\n"
+            for i, result in enumerate(local_results[:5]):  # Limit to top 5
+                local_context += f"{i+1}. {result.get('text', '')[:500]}...\n"
+                local_context += f"   Source: {result.get('metadata', {}).get('source', 'Unknown')}\n\n"
+            combined_parts.append(local_context)
+        
+        # Add web results
+        if web_results:
+            web_context = "Current Web Information:\n\n"
+            web_context += self.web_search_agent.format_results_for_context(web_results, max_length=1500)
+            combined_parts.append(web_context)
+        
+        # Combine with priority based on strategy
+        if analysis['strategy']['priority'] == 'local':
+            return "\n".join(combined_parts)
+        elif analysis['strategy']['priority'] == 'web':
+            return "\n".join(reversed(combined_parts))
+        else:  # hybrid
+            return "\n".join(combined_parts)
+
+    def _generate_response_with_context(self, query: str, context: str, chat_id: str = None) -> Dict[str, Any]:
+        """Generate response using the provided context."""
+        # Use existing query method but with the combined context
+        # This is a simplified approach - in production, you might want more sophisticated context handling
+        
+        # Create a mock state with the combined context
+        session_id = chat_id or str(uuid.uuid4())
+        
+        try:
+            # Format the context for the LLM
+            formatted_context = f"""Based on the following information, please answer the user's question:
+
+{context}
+
+Question: {query}
+
+Please provide a comprehensive answer using the information provided above. If the information comes from web sources, mention that it's from current web search. If it's from local documents, indicate that as well."""
+
+            # Generate response using LLM
+            response = self.llm.invoke(formatted_context)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Extract sources from context (simplified)
+            sources = self._extract_sources_from_context(context)
+            
+            # Generate follow-up questions
+            followup_questions = self._generate_followup_questions(query, response_text, context)
+            
+            return {
+                "response": response_text,
+                "sources": sources,
+                "followup_questions": followup_questions
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating response: {str(e)}")
+            return {
+                "response": f"I encountered an error while processing your request: {str(e)}",
+                "sources": [],
+                "followup_questions": []
+            }
+
+    def _extract_sources_from_context(self, context: str) -> List[Dict[str, Any]]:
+        """Extract source information from the combined context."""
+        sources = []
+        
+        # Simple extraction based on context structure
+        lines = context.split('\n')
+        current_source = {}
+        
+        for line in lines:
+            if line.strip().startswith('Source:'):
+                if current_source:
+                    sources.append(current_source)
+                current_source = {
+                    "source": line.replace('Source:', '').strip(),
+                    "text": "",
+                    "type": "local"
+                }
+            elif line.strip().startswith('http'):
+                current_source = {
+                    "source": line.strip(),
+                    "text": "",
+                    "type": "web"
+                }
+            elif current_source and line.strip() and not line.startswith('   '):
+                current_source["text"] = line.strip()[:200] + "..."
+        
+        if current_source:
+            sources.append(current_source)
+        
+        return sources[:5]  # Limit to 5 sources
+
+    def _generate_followup_questions(self, query: str, response: str, context: str) -> List[str]:
+        """
+        Generate follow-up questions based on the query, response, and context.
+        
+        Args:
+            query: Original user query
+            response: Generated response
+            context: Context used for generation
+            
+        Returns:
+            List of follow-up questions
+        """
+        try:
+            # Create a prompt for generating follow-up questions
+            followup_prompt = f"""Based on the following conversation, generate 3 relevant follow-up questions that the user might want to ask.
+
+Original Question: {query}
+
+Response: {response[:500]}...
+
+Context: {context[:800]}...
+
+Generate 3 specific, relevant follow-up questions that would help the user explore this topic further. Focus on:
+1. Clarifying questions about the response
+2. Related topics that might be of interest  
+3. Deeper dive questions into specific aspects
+
+Format as a simple list, one question per line, without numbering."""
+
+            # Generate follow-up questions using the LLM
+            followup_response = self.llm.invoke(followup_prompt)
+            followup_text = followup_response.content if hasattr(followup_response, 'content') else str(followup_response)
+            
+            # Parse the response into individual questions
+            questions = []
+            for line in followup_text.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#') and len(line) > 10:
+                    # Remove any numbering or bullet points
+                    clean_line = line.lstrip('0123456789.-• ')
+                    if clean_line.endswith('?'):
+                        questions.append(clean_line)
+            
+            # Limit to 3 questions and ensure they're not too similar to the original
+            unique_questions = []
+            for q in questions[:5]:  # Check top 5 candidates
+                if len(unique_questions) < 3 and not self._is_similar_question(query, q):
+                    unique_questions.append(q)
+            
+            return unique_questions
+            
+        except Exception as e:
+            logger.error(f"Error generating follow-up questions: {str(e)}")
+            # Return some generic follow-up questions as fallback
+            return [
+                "Can you provide more details about this topic?",
+                "What are the key takeaways from this information?",
+                "Are there any related topics I should know about?"
+            ]
+
+    def _is_similar_question(self, original: str, candidate: str) -> bool:
+        """Check if a candidate question is too similar to the original."""
+        original_words = set(original.lower().split())
+        candidate_words = set(candidate.lower().split())
+        
+        # Calculate word overlap
+        overlap = len(original_words & candidate_words)
+        total_unique_words = len(original_words | candidate_words)
+        
+        # If more than 60% overlap, consider it too similar
+        similarity = overlap / total_unique_words if total_unique_words > 0 else 0
+        return similarity > 0.6
 
     def query(self, query: str, chat_id: str = None, persist_state: bool = False) -> Dict[str, Any]:
         """

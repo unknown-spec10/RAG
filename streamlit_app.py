@@ -4,7 +4,7 @@ import os
 import sys
 import logging
 import tempfile
-from typing import Optional
+from typing import Optional, Dict, Any
 
 # Add the project root to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,15 +63,29 @@ def get_api_key() -> Optional[str]:
         st.error("Error accessing API key. Please check your Streamlit Cloud configuration.")
         return None
 
+def get_serp_api_key() -> Optional[str]:
+    """Get SERP API key from secrets with proper error handling."""
+    try:
+        serp_key = st.secrets.get("serp_api_key")
+        if not serp_key:
+            st.warning("SERP API key not found. Web search functionality will be disabled.")
+            return None
+        return serp_key
+    except Exception as e:
+        logger.warning(f"Error accessing SERP API key: {str(e)}")
+        return None
+
 def initialize_agent(use_reranker=True):
     """Initialize the RAG agent with proper error handling."""
     try:
-        # Get API key
+        # Get API keys
         api_key = get_api_key()
         if not api_key:
             st.error("Failed to get API key. Please check your Streamlit Cloud secrets.")
             return None
             
+        serp_api_key = get_serp_api_key()
+        
         # Initialize retriever with ChromaDB
         try:
             retriever = ChromaRetriever()
@@ -80,12 +94,13 @@ def initialize_agent(use_reranker=True):
             st.error("Failed to initialize document database. Please try again.")
             return None
         
-        # Initialize agent
+        # Initialize agent with SERP API key
         try:
             agent = RAGAgent(
                 retriever=retriever,
                 api_key=api_key,
-                use_reranker=use_reranker
+                use_reranker=use_reranker,
+                serp_api_key=serp_api_key
             )
         except Exception as e:
             logger.error(f"Error initializing RAG agent: {str(e)}")
@@ -170,6 +185,94 @@ def process_pdf_file(uploaded_file, chunking_strategy, chunk_size, chunk_overlap
         logger.error(f"Error processing PDF: {str(e)}")
         raise
 
+def get_user_consent_for_web_search(analysis: Dict[str, Any]) -> bool:
+    """
+    Check if user has consented to web search via sidebar checkbox.
+    
+    Args:
+        analysis: Query analysis from orchestrator
+        
+    Returns:
+        True if user consents to web search, False otherwise
+    """
+    # Check if web search is allowed via sidebar checkbox
+    return st.session_state.get('allow_web_search', False)
+
+def process_query_with_orchestration(agent, query: str, allow_web_search: bool):
+    """Process query using orchestration with user consent from sidebar."""
+    
+    def consent_callback(analysis):
+        if allow_web_search:
+            # Show brief info about the web search decision
+            if analysis['strategy']['use_web_search']:
+                with st.expander("🌐 Web Search Info", expanded=False):
+                    st.info(f"**Decision:** {analysis['reasoning']}")
+                    if analysis.get('filtered_query'):
+                        st.write(f"**Filtered Query:** `{analysis['filtered_query']}`")
+                        st.caption("*(Sensitive information removed for privacy)*")
+            return True
+        else:
+            return False
+    
+    try:
+        # Use orchestrated query processing
+        result = agent.query_with_orchestration(query, user_consent_callback=consent_callback)
+        
+        # Display the enhanced response
+        display_orchestrated_response(result)
+        
+    except Exception as e:
+        logger.error(f"Error in orchestrated query processing: {str(e)}")
+        st.error(f"Error processing query: {str(e)}")
+        
+        # Fallback to regular query processing
+        st.info("Falling back to local-only search...")
+        try:
+            fallback_result = agent.query(query)
+            display_response(fallback_result)
+        except Exception as fallback_error:
+            logger.error(f"Fallback query also failed: {str(fallback_error)}")
+            st.error(f"Query processing failed: {str(fallback_error)}")
+
+def display_orchestrated_response(result: Dict[str, Any]):
+    """Display the orchestrated response with clean, simple interface."""
+    
+    # Check if web search was used
+    query_analysis = result.get("query_analysis", {})
+    web_results_count = query_analysis.get("web_results_count", 0)
+    
+    # Show web search warning if applicable
+    if web_results_count > 0:
+        st.warning("⚠️ **Web Search Results Included** - This response contains information from web search results. Please verify important information from reliable sources.")
+    
+    # Display the main response
+    st.write("### 🤖 Response")
+    st.write(result.get("response", "No response available"))
+    
+    # Show confidence score if present
+    if "confidence" in result:
+        st.info(f"**LLM Confidence Score:** {result['confidence']:.2f}")
+    
+    # Display sources with type indicators (simplified)
+    st.write("### 📚 Sources")
+    sources = result.get("sources", [])
+    
+    if sources:
+        for i, source in enumerate(sources, 1):
+            source_type = source.get("type", "unknown")
+            icon = "📄" if source_type == "local" else "🌐" if source_type == "web" else "📋"
+            
+            with st.expander(f"{icon} Source {i}: {source.get('source', 'Unknown')}"):
+                st.write(source.get("text", "No text available"))
+    else:
+        st.info("No sources found.")
+    
+    # Display follow-up questions
+    if result.get("followup_questions"):
+        st.write("### ❓ Suggested Follow-up Questions")
+        for i, question in enumerate(result["followup_questions"], 1):
+            st.write(f"{i}. {question}")
+
 def display_response(result):
     """Display the response with sources and follow-up questions."""
     # Display the response
@@ -211,6 +314,23 @@ def main():
     chunking_strategy = st.sidebar.selectbox("Chunking Strategy", ["recursive", "semantic"], index=0)
     chunk_size = st.sidebar.slider("Chunk Size", min_value=200, max_value=2000, value=1000, step=100)
     chunk_overlap = st.sidebar.slider("Chunk Overlap", min_value=0, max_value=500, value=200, step=50)
+    
+    # Web search options
+    st.sidebar.markdown("---")
+    st.sidebar.header("Search Options")
+    use_orchestration = st.sidebar.checkbox("Enable Intelligent Search Strategy", value=True, 
+                                           help="Uses AI to decide when to search local documents vs web")
+    
+    # Web search consent checkbox
+    allow_web_search = st.sidebar.checkbox("Allow Web Search", value=False,
+                                         help="Enable web search for current events and public information. Your query will be filtered to remove sensitive data.")
+    
+    if use_orchestration and allow_web_search:
+        st.sidebar.success("🌐 Web search enabled")
+        st.sidebar.caption("Queries will be filtered for privacy before web search")
+    elif use_orchestration:
+        st.sidebar.info("📄 Local search only")
+    
     st.sidebar.markdown("---")
     st.sidebar.markdown("Created and maintained by Deep Podder")
 
@@ -242,12 +362,20 @@ def main():
                 # Query input
                 query = st.text_input("Ask a question about the document:")
                 if query:
-                    try:
-                        result = agent.query(query)
-                        display_response(result)
-                    except Exception as e:
-                        logger.error(f"Error processing query: {str(e)}")
-                        st.error(f"Error processing query: {str(e)}")
+                    # Store web search preference
+                    st.session_state['allow_web_search'] = allow_web_search
+                    
+                    if use_orchestration:
+                        # Use orchestrated query processing with sidebar setting
+                        process_query_with_orchestration(agent, query, allow_web_search)
+                    else:
+                        # Use traditional local-only processing
+                        try:
+                            result = agent.query(query)
+                            display_response(result)
+                        except Exception as e:
+                            logger.error(f"Error processing query: {str(e)}")
+                            st.error(f"Error processing query: {str(e)}")
             except Exception as e:
                 logger.error(f"Error processing file: {str(e)}")
                 st.error(f"Error processing file: {str(e)}")
